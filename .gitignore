@@ -1,0 +1,15 @@
+.env
+.venv/
+.deps/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.tsbuildinfo
+*.db
+*.sqlite3
+node_modules/
+dist/
+.vite/
+.idea/
+.vscode/
+*.log
