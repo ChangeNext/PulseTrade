@@ -11,7 +11,7 @@ export function ConnectionStatus({ health }: { health: HealthStatus | null }) {
   const telegramConnected = Boolean(health?.telegram_connected ?? telegramConfigured);
   return (
     <div className="header-status" aria-label="시스템 연결 상태">
-      <StatusItem label="KIS REST" connected={Boolean(health?.kis_account_connected)} standby={!health?.kis_configured} />
+      <StatusItem label="KIS REST" connected={Boolean(health?.rest_connected)} standby={!health?.kis_configured} />
       <StatusItem label="WebSocket" connected={Boolean(health?.websocket_connected)} />
       <StatusItem label="Telegram" connected={telegramConnected} standby={!telegramConfigured} />
     </div>

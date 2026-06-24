@@ -40,6 +40,45 @@ class Settings(BaseSettings):
     max_daily_loss_krw: int = 50_000
     max_daily_orders: int = 5
     max_position_amount_krw: int = 300_000
+    strategy_symbols: str = "005930"
+    auto_order_budget_krw: int = 100_000
+    strategy_stop_loss_pct: float = -1.0
+    strategy_take_profit_pct: float = 2.0
+    strategy_volume_multiplier: float = 2.0
+    signal_buy_threshold: float = 70.0
+    signal_sell_threshold: float = -60.0
+    signal_exit_threshold: float = -80.0
+    signal_weight_orb: float = 25.0
+    signal_weight_volume: float = 20.0
+    signal_weight_vwap: float = 15.0
+    signal_weight_orderbook: float = 15.0
+    signal_weight_trade_strength: float = 15.0
+    signal_weight_momentum: float = 10.0
+    order_reconcile_interval_seconds: float = 3.0
+    sim_initial_cash_krw: int = 10_000_000
+    sim_commission_bps: float = 1.5
+    sim_sell_tax_bps: float = 18.0
+    sim_latency_ms: int = 150
+    max_spread_bps: float = 20.0
+    max_quote_age_seconds: float = 2.0
+    volatility_guard_move_pct: float = 2.0
+    volatility_guard_cooldown_seconds: int = 120
+    strategy_order_ttl_seconds: float = 3.0
+    strategy_max_reprices: int = 2
+    strategy_max_holding_minutes: int = 30
+    strategy_force_exit_time: str = "151500"
+
+    @property
+    def strategy_symbol_list(self) -> list[str]:
+        return [
+            symbol.strip()
+            for symbol in self.strategy_symbols.split(",")
+            if symbol.strip().isdigit() and len(symbol.strip()) == 6
+        ]
+
+    @property
+    def kis_is_paper(self) -> bool:
+        return "openapivts.koreainvestment.com" in self.kis_base_url.lower()
 
     @property
     def kis_configured(self) -> bool:

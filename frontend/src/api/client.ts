@@ -43,8 +43,14 @@ export const api = {
   submitOrder: (order: ManualOrderInput) =>
     request<{ order_id: string; state: string; message: string }>("/orders/manual", {
       method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
       body: JSON.stringify(order),
     }),
+  cancelOrder: (orderId: string) =>
+    request<{ order_id: string; state: string; message: string }>(`/orders/${orderId}/cancel`, {
+      method: "POST",
+    }),
+  reconcile: () => request<{ account_synced: boolean; orders_synced: boolean }>("/control/reconcile", { method: "POST" }),
   setAutomation: (enabled: boolean) =>
     request<{ enabled: boolean; message?: string }>("/control/automation", {
       method: "POST",

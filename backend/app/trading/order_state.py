@@ -6,6 +6,7 @@ class OrderState(StrEnum):
     RISK_CHECKED = "RISK_CHECKED"
     ORDER_REQUESTED = "ORDER_REQUESTED"
     ORDER_SENT = "ORDER_SENT"
+    RECONCILING = "RECONCILING"
     PARTIALLY_FILLED = "PARTIALLY_FILLED"
     FILLED = "FILLED"
     CANCEL_REQUESTED = "CANCEL_REQUESTED"
@@ -17,7 +18,19 @@ class OrderState(StrEnum):
 ALLOWED_TRANSITIONS: dict[OrderState, set[OrderState]] = {
     OrderState.SIGNAL: {OrderState.RISK_CHECKED, OrderState.REJECTED, OrderState.ERROR},
     OrderState.RISK_CHECKED: {OrderState.ORDER_REQUESTED, OrderState.REJECTED, OrderState.ERROR},
-    OrderState.ORDER_REQUESTED: {OrderState.ORDER_SENT, OrderState.REJECTED, OrderState.ERROR},
+    OrderState.ORDER_REQUESTED: {
+        OrderState.ORDER_SENT,
+        OrderState.RECONCILING,
+        OrderState.REJECTED,
+        OrderState.ERROR,
+    },
+    OrderState.RECONCILING: {
+        OrderState.ORDER_SENT,
+        OrderState.PARTIALLY_FILLED,
+        OrderState.FILLED,
+        OrderState.REJECTED,
+        OrderState.ERROR,
+    },
     OrderState.ORDER_SENT: {
         OrderState.PARTIALLY_FILLED,
         OrderState.FILLED,
@@ -51,4 +64,3 @@ class OrderStateMachine:
             raise InvalidOrderTransition(f"{self.state} -> {next_state} transition is not allowed")
         self.state = next_state
         return self.state
-

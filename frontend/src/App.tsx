@@ -35,7 +35,6 @@ export default function App() {
         api.health(), api.account(), api.positions(), api.orders(), api.strategy(),
       ]);
       const previous = previousHealth.current;
-      if (nextHealth.kis_configured) nextHealth.kis_account_connected = true;
       if (!previous) {
         appendLog("API", "INFO", "REST API 연결이 확인되었습니다.");
         appendLog("WEBSOCKET", nextHealth.websocket_connected ? "INFO" : "ERROR", nextHealth.websocket_connected ? "실시간 시세 연결이 확인되었습니다." : "실시간 시세 연결이 끊겨 있습니다.");
@@ -72,6 +71,16 @@ export default function App() {
     catch (caught) { appendLog("API", "ERROR", caught instanceof Error ? caught.message : "긴급 정지 요청에 실패했습니다."); }
   }
 
+  async function cancelOrder(orderId: string) {
+    try {
+      const result = await api.cancelOrder(orderId);
+      appendLog("ORDER", "INFO", `${result.state}: ${result.message}`);
+      await refresh();
+    } catch (caught) {
+      appendLog("ORDER", "ERROR", caught instanceof Error ? caught.message : "주문 취소에 실패했습니다.");
+    }
+  }
+
   const mode = health?.mode ?? "SIM";
   const stopped = health?.emergency_stopped ?? false;
 
@@ -83,7 +92,7 @@ export default function App() {
         <div className="emergency-dock"><KillSwitchButton stopped={stopped} onChange={toggleStop} /></div>
       </header>
 
-      {mode === "LIVE" && <div className="live-mode-banner"><strong>LIVE 실거래 모드</strong><span>모든 주문은 실제 계좌에 반영됩니다. 종목·가격·수량을 다시 확인하세요.</span></div>}
+      {mode === "LIVE" && <div className="live-mode-banner"><strong>LIVE 잠금 상태</strong><span>실계좌 주문 라우팅이 연결되지 않아 모든 주문이 거부됩니다.</span></div>}
       {stopped && <div className="stop-banner"><strong>긴급 정지 상태</strong><span>신규 주문과 자동매매가 차단되었습니다.</span></div>}
       {error && <div className="error-banner"><strong>REST API 연결 오류</strong><span>{error}</span></div>}
 
@@ -94,7 +103,7 @@ export default function App() {
           <StrategyPanel strategy={strategy} emergencyStopped={stopped} onAutoOrderToggle={toggleAutomation} />
         </div>
         <PositionTable positions={positions} />
-        <OrderLogTable orders={orders} />
+        <OrderLogTable orders={orders} onCancel={cancelOrder} />
         <SystemLog logs={logs} />
       </main>
 

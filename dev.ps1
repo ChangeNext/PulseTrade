@@ -16,7 +16,7 @@ if (-not (Test-Path -LiteralPath $venvPython)) {
     python -m venv (Join-Path $backendDir ".venv")
 }
 
-& $venvPython -c "import fastapi, sqlalchemy, uvicorn" 2>$null
+& $venvPython -c "import fastapi, sqlalchemy, uvicorn, alembic" 2>$null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[setup] Installing backend dependencies..." -ForegroundColor Yellow
     & $venvPython -m pip install -r $requirements
@@ -29,6 +29,11 @@ if (-not (Test-Path -LiteralPath $viteScript)) {
     try { npm.cmd install } finally { Pop-Location }
     if ($LASTEXITCODE -ne 0) { throw "Frontend dependency installation failed." }
 }
+
+Write-Host "[setup] Applying database migrations..." -ForegroundColor Yellow
+Push-Location $backendDir
+try { & $venvPython -m alembic upgrade head } finally { Pop-Location }
+if ($LASTEXITCODE -ne 0) { throw "Database migration failed." }
 
 $node = (Get-Command node.exe -ErrorAction Stop).Source
 $backend = $null

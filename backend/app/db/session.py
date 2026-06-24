@@ -1,5 +1,8 @@
 from collections.abc import AsyncIterator
+from pathlib import Path
 
+from alembic import command
+from alembic.config import Config
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import get_settings
@@ -15,8 +18,8 @@ async def get_session() -> AsyncIterator[AsyncSession]:
 
 
 async def init_db() -> None:
-    from app.db.models import Base
-
-    async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
-
+    backend_dir = Path(__file__).resolve().parents[2]
+    config = Config(str(backend_dir / "alembic.ini"))
+    config.set_main_option("script_location", str(backend_dir / "alembic"))
+    config.set_main_option("sqlalchemy.url", settings.database_url.replace("+aiosqlite", ""))
+    command.upgrade(config, "head")

@@ -19,9 +19,17 @@ class OrderResponse(BaseModel):
     mode: str
     state: OrderState
     message: str
+    broker_order_id: str | None = None
+    filled_quantity: int = 0
+    average_fill_price: Decimal | None = None
     risk_reasons: list[str] = Field(default_factory=list)
+
+
+class CancelOrderResponse(BaseModel):
+    order_id: str
+    state: OrderState
+    message: str
 
 
 class KillSwitchRequest(BaseModel):
     stopped: bool = True
-

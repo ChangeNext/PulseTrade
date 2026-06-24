@@ -1,4 +1,6 @@
+import asyncio
 from dataclasses import dataclass
+from time import monotonic
 from typing import Any
 
 import httpx
@@ -43,6 +45,9 @@ class KISClient:
         self.access_token: str | None = None
         self._http_client = http_client
         self._owns_http_client = http_client is None
+        self._rate_lock = asyncio.Lock()
+        self._last_request_at = 0.0
+        self._minimum_interval = 0.5 if "openapivts" in self.base_url.lower() else 0.05
 
     @property
     def configured(self) -> bool:
@@ -63,11 +68,14 @@ class KISClient:
     async def post_public(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         if not self.configured:
             raise KISConfigurationError("KIS credentials are not configured")
-        response = await self._client().post(
-            path,
-            json=payload,
-            headers={"content-type": "application/json", "accept": "text/plain"},
-        )
+        async with self._rate_lock:
+            await self._wait_for_rate_limit()
+            response = await self._client().post(
+                path,
+                json=payload,
+                headers={"content-type": "application/json", "accept": "text/plain"},
+            )
+            self._last_request_at = monotonic()
         return self._decode_response(response)
 
     async def request(
@@ -112,8 +120,18 @@ class KISClient:
             "tr_cont": tr_cont,
             "custtype": "P",
         }
-        response = await self._client().request(method, path, headers=headers, params=params, json=json)
+        async with self._rate_lock:
+            await self._wait_for_rate_limit()
+            response = await self._client().request(
+                method, path, headers=headers, params=params, json=json
+            )
+            self._last_request_at = monotonic()
         return KISResponse(data=self._decode_response(response), headers=response.headers)
+
+    async def _wait_for_rate_limit(self) -> None:
+        remaining = self._minimum_interval - (monotonic() - self._last_request_at)
+        if remaining > 0:
+            await asyncio.sleep(remaining)
 
     @staticmethod
     def _decode_response(response: httpx.Response) -> dict[str, Any]:

@@ -51,3 +51,38 @@ def test_daily_limits_and_position_limit_block_order() -> None:
         "MAX_POSITION_AMOUNT_EXCEEDED",
     }
 
+
+def test_sell_cannot_exceed_position_after_pending_sells() -> None:
+    context = RiskContext(
+        position_quantities={"005930": 3}, pending_sell_quantities={"005930": 2}
+    )
+    decision = RiskManager().evaluate(
+        OrderIntent("005930", "SELL", 2, Decimal("50000")), context
+    )
+    assert "INSUFFICIENT_POSITION_QUANTITY" in decision.reasons
+
+
+def test_invalid_tick_size_is_blocked() -> None:
+    decision = RiskManager(max_order_amount=Decimal("1000000")).evaluate(
+        OrderIntent("005930", "BUY", 1, Decimal("70001")), RiskContext()
+    )
+    assert "INVALID_TICK_SIZE" in decision.reasons
+
+
+def test_unknown_daily_pnl_fails_closed() -> None:
+    decision = RiskManager().evaluate(
+        make_intent(), RiskContext(pnl_synchronized=False)
+    )
+    assert "DAILY_PNL_NOT_SYNCHRONIZED" in decision.reasons
+
+
+def test_exit_sell_is_not_blocked_by_entry_limits() -> None:
+    context = RiskContext(
+        daily_realized_pnl=Decimal("-50000"),
+        daily_order_count=5,
+        position_quantities={"005930": 10},
+    )
+    decision = RiskManager(max_order_amount=Decimal("100000")).evaluate(
+        OrderIntent("005930", "SELL", 10, Decimal("50000")), context
+    )
+    assert decision.approved
