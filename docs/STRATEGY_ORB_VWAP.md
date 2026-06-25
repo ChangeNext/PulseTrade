@@ -1,22 +1,37 @@
 # ORB + VWAP + Volume Strategy
 
-현재 구현은 다음 구성요소를 각각 -100~100으로 정규화한 뒤 `SignalScorer`가 가중 합산한다.
+The live strategy score is a weighted composite of market-data components. Each
+component returns a normalized score from -100 to 100. `SignalScorer` combines
+ready components by configured weights, then applies the risk filter before any
+entry signal can become an order.
 
-- ORB 25%
-- 1분 거래량 급증 20%
-- VWAP 15%
-- 호가 잔량 불균형 15%
-- 실시간 체결강도 15%
-- 5분 모멘텀 10%
+Default component weights:
 
-기본 판단은 `BUY >= 70`, 보유 중 `SELL <= -60`, `EXIT <= -80`, 그 외 `WAIT`이다. 계좌 주문 전에는 점수와 무관하게 RiskManager를 반드시 통과한다.
+- Opening range breakout: 25
+- 1-minute relative volume: 20
+- VWAP distance: 15
+- Order book imbalance: 15
+- Realtime trade strength: 15
+- 5-minute momentum: 10
+- Trend alignment: 10
 
-기초 진입 데이터는 다음 조건을 사용한다.
+Default decision thresholds:
 
-- 현재가가 Opening Range 고가보다 높음
-- 현재가가 VWAP보다 높음
-- 현재 1분 거래량이 최근 평균의 기본 2배보다 큼
-- 이미 보유 중이 아님
-- 같은 종목의 미체결 주문이 없음
+- `BUY`: composite score >= 70 and risk filter passes
+- `SELL`: held position score <= -60
+- `EXIT`: held position score <= -80
+- `WAIT`: every other state, including missing required data
 
-Opening Range 집계 구간, 장 상태, 호가 단위, 거래정지/VI 처리는 실제 전략 운영 전에 추가해야 한다. 생성된 신호는 주문이 아니며 ExecutionEngine과 RiskManager를 우회할 수 없다.
+The trend-alignment component uses recent 1-minute closes to compare the 5-bar
+average with the 20-bar average, measure the 20-bar average slope, and penalize
+very extended moves above the 20-bar average. This is intended to reward cleaner
+chart structure without treating a single price jump as a full signal.
+
+Risk gates still run after scoring. The strategy will not enter when a position
+is already held, an order is pending, order book/trade-strength data is missing,
+the stock is halted, VI is active, the spread is too wide, or the order book is
+stale. The generated signal is not an order by itself; `ExecutionEngine` and
+`RiskManager` remain the final safety layer.
+
+This score is a trading heuristic, not a profitability guarantee. Backtesting
+and paper/live observation should be used before changing thresholds or weights.

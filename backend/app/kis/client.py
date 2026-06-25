@@ -47,7 +47,7 @@ class KISClient:
         self._owns_http_client = http_client is None
         self._rate_lock = asyncio.Lock()
         self._last_request_at = 0.0
-        self._minimum_interval = 0.5 if "openapivts" in self.base_url.lower() else 0.05
+        self._minimum_interval = 1.0
 
     @property
     def configured(self) -> bool:

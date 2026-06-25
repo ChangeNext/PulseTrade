@@ -80,6 +80,57 @@ h2 { margin: 0; color: #edf4f7; font-size: 17px; line-height: 1.2; letter-spacin
 .neutral { color: #d8e2e8 !important; }
 
 .control-grid { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 16px; }
+.market-panel { min-width: 0; border: 1px solid #20323e; border-radius: 12px; overflow: hidden; background: #091016; box-shadow: 0 24px 70px rgba(0,0,0,.2); }
+.market-hero { min-height: 86px; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 20px 22px; border-bottom: 1px solid #1b2b35; background: linear-gradient(135deg, #101c24, #0b141b 52%, #111a1d); }
+.quote-title { display: flex; align-items: baseline; gap: 12px; }
+.quote-title h2 { font-size: 24px; letter-spacing: 0; }
+.quote-title span { color: #7b909c; font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; font-weight: 800; }
+.quote-price { display: grid; justify-items: end; gap: 4px; }
+.quote-price strong { color: #f5fbfc; font-size: 31px; font-weight: 850; line-height: 1; font-variant-numeric: tabular-nums; }
+.quote-price span { font-size: 12px; font-weight: 800; }
+.market-grid { display: grid; grid-template-columns: minmax(0, 1fr) 330px; min-height: 342px; }
+.chart-surface { min-width: 0; padding: 16px 18px 18px; background: #081017; }
+.chart-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; color: #6f8490; font-size: 11px; font-weight: 800; }
+.chart-toolbar em { color: #90a5b0; font-style: normal; font-variant-numeric: tabular-nums; }
+.market-chart { display: block; width: 100%; height: 282px; border: 1px solid #15252e; border-radius: 8px; background: linear-gradient(180deg, #0b151d, #071016); }
+.chart-grid { stroke: #1c303b; stroke-width: 1; }
+.volume-bar { fill: #2d5361; opacity: .46; }
+.price-area { fill: url(#priceFill); }
+.price-line { fill: none; stroke: #2bd6a2; stroke-width: 3; stroke-linejoin: round; stroke-linecap: round; filter: drop-shadow(0 0 6px rgba(43,214,162,.3)); }
+.price-dot { fill: #f4fffb; stroke: #2bd6a2; stroke-width: 2; }
+.chart-label { fill: #708894; font-size: 10px; font-weight: 800; }
+.chart-empty { min-height: 282px; display: grid; place-items: center; border: 1px solid #15252e; border-radius: 8px; color: #6f838e; background: #081017; font-size: 12px; }
+.chart-empty.error { color: #ff9a94; background: #181012; border-color: #4a2525; text-align: center; padding: 20px; }
+.period-control { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-top: 10px; padding: 5px; border: 1px solid #172934; border-radius: 8px; background: #060d13; }
+.period-control button { min-width: 0; height: 34px; border: 1px solid transparent; border-radius: 6px; color: #718691; background: transparent; font-size: 11px; font-weight: 850; }
+.period-control button:hover { color: #cfe0e7; border-color: #263d49; background: #101b22; }
+.period-control button.active { color: #07110f; border-color: #2bd6a2; background: #2bd6a2; box-shadow: 0 0 18px rgba(43, 214, 162, .16); }
+.score-deck { display: grid; grid-template-rows: auto auto 1fr; gap: 12px; padding: 16px; border-left: 1px solid #1b2b35; background: #0c151c; }
+.score-card { min-height: 104px; display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 6px 12px; padding: 15px; border: 1px solid #263945; border-radius: 8px; background: #111b22; }
+.score-card span { grid-column: 1 / -1; color: #7e929d; font-size: 10px; font-weight: 800; letter-spacing: .12em; }
+.score-card strong { color: #f4fafc; font-size: 42px; line-height: .9; font-weight: 900; font-variant-numeric: tabular-nums; }
+.score-card em { align-self: center; border-radius: 6px; padding: 6px 9px; font-size: 11px; font-style: normal; font-weight: 900; }
+.score-buy { border-color: #1f755e; background: linear-gradient(145deg, #132b25, #101b20); }
+.score-buy em { color: #091511; background: #2bd6a2; }
+.score-sell { border-color: #7a3735; background: linear-gradient(145deg, #2a191b, #11191e); }
+.score-sell em { color: #210d0e; background: #ff756d; }
+.score-wait em { color: #241b08; background: #f5b942; }
+.score-rules { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.score-rules div { min-height: 54px; display: grid; gap: 5px; align-content: center; padding: 9px; border: 1px solid #21313b; border-radius: 7px; background: #091117; }
+.score-rules span { color: #708691; font-size: 9px; font-weight: 900; letter-spacing: .12em; }
+.score-rules strong { color: #d8e4e9; font-size: 12px; }
+.component-list { display: grid; align-content: start; gap: 9px; min-height: 0; }
+.component-row { display: grid; grid-template-columns: 78px 1fr 32px; align-items: center; gap: 9px; }
+.component-row div { display: grid; gap: 2px; }
+.component-row strong { color: #cddae0; font-size: 11px; }
+.component-row span { color: #60757f; font-size: 8px; font-weight: 900; letter-spacing: .12em; }
+.component-row em { color: #9fb0b9; font-size: 11px; font-style: normal; font-weight: 800; text-align: right; font-variant-numeric: tabular-nums; }
+.component-row meter { width: 100%; height: 8px; }
+.component-row meter::-webkit-meter-bar { border: 0; border-radius: 99px; background: #1b2932; }
+.component-row meter::-webkit-meter-optimum-value { border-radius: 99px; background: #2bd6a2; }
+.component-row meter::-webkit-meter-suboptimum-value { border-radius: 99px; background: #f5b942; }
+.component-row meter::-webkit-meter-even-less-good-value { border-radius: 99px; background: #ff645c; }
+.component-empty { margin: 0; color: #6f838e; font-size: 11px; line-height: 1.5; }
 .live-order-panel { border-color: #683432; box-shadow: inset 0 2px 0 #8b3733, 0 18px 55px rgba(0,0,0,.18); }
 .inline-live-warning { margin: -5px 0 17px; padding: 10px 12px; border: 1px solid #66312f; border-radius: 7px; color: #eaa6a1; background: #2b1718; font-size: 11px; }
 .inline-live-warning strong { margin-right: 7px; color: var(--red); }
@@ -183,6 +234,9 @@ tbody tr:hover { background: rgba(39, 64, 77, .16); }
   .app-header { grid-template-columns: 220px 1fr 174px; gap: 16px; padding-left: 20px; }
   .header-center { gap: 15px; }.header-status { gap: 12px; }.connection-item { min-width: auto; }.connection-item small { display: none; }
   .account-metrics { grid-template-columns: repeat(3, 1fr); row-gap: 18px; }.account-metrics article:nth-child(3) { border-right: 0; }.account-metrics article:nth-child(4) { padding-left: 0; }
+  .market-grid { grid-template-columns: 1fr; }
+  .score-deck { border-left: 0; border-top: 1px solid #1b2b35; grid-template-columns: 240px 1fr; grid-template-rows: auto auto; }
+  .component-list { grid-column: 1 / -1; }
 }
 
 @media (max-width: 780px) {
@@ -190,6 +244,10 @@ tbody tr:hover { background: rgba(39, 64, 77, .16); }
   .header-center { justify-content: flex-start; flex-wrap: wrap; }.emergency-dock { top: 18px; right: 12px; }.kill-switch { min-width: 110px; height: 54px; padding: 0 10px; }.kill-switch .stop-icon { display: none; }
   .live-mode-banner, .stop-banner, .error-banner { align-items: flex-start; flex-direction: column; gap: 3px; padding: 10px 16px; }
   .dashboard { width: min(100% - 24px, 1500px); padding-top: 12px; }.control-grid { grid-template-columns: 1fr; }
+  .market-hero { align-items: flex-start; flex-direction: column; }
+  .quote-price { justify-items: start; }
+  .score-deck { grid-template-columns: 1fr; }
+  .component-list { grid-column: auto; }
   .account-metrics { grid-template-columns: repeat(2, 1fr); }.account-metrics article { padding: 6px 12px; }.account-metrics article:nth-child(2n) { border-right: 0; }.account-metrics article:nth-child(odd) { padding-left: 0; }.account-metrics article:nth-child(4) { padding-left: 12px; }
   .strategy-list { grid-template-columns: 1fr; }.log-row { grid-template-columns: 64px 72px 1fr; }.log-level { display: none; }.app-footer { flex-direction: column; padding: 20px 16px; }
 }
@@ -198,4 +256,3 @@ tbody tr:hover { background: rgba(39, 64, 77, .16); }
   .brand-subtitle { display: none; }.header-status { width: 100%; justify-content: space-between; }.connection-item strong { font-size: 9px; }
   .panel { padding: 17px; }.split-fields { grid-template-columns: 1fr; }.account-metrics strong { font-size: 14px; }.modal-actions { grid-template-columns: 1fr; }
 }
-

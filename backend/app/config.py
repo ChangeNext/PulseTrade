@@ -1,7 +1,7 @@
 from enum import StrEnum
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     signal_weight_orderbook: float = 15.0
     signal_weight_trade_strength: float = 15.0
     signal_weight_momentum: float = 10.0
+    signal_weight_trend: float = 10.0
     order_reconcile_interval_seconds: float = 3.0
     sim_initial_cash_krw: int = 10_000_000
     sim_commission_bps: float = 1.5
@@ -68,6 +69,13 @@ class Settings(BaseSettings):
     strategy_max_holding_minutes: int = 30
     strategy_force_exit_time: str = "151500"
 
+    @field_validator("trading_mode", mode="before")
+    @classmethod
+    def normalize_trading_mode(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip().upper()
+        return value
+
     @property
     def strategy_symbol_list(self) -> list[str]:
         return [
@@ -79,6 +87,10 @@ class Settings(BaseSettings):
     @property
     def kis_is_paper(self) -> bool:
         return "openapivts.koreainvestment.com" in self.kis_base_url.lower()
+
+    @property
+    def kis_is_live(self) -> bool:
+        return "openapi.koreainvestment.com" in self.kis_base_url.lower() and not self.kis_is_paper
 
     @property
     def kis_configured(self) -> bool:

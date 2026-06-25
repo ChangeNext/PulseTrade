@@ -1,0 +1,209 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e8]:
+      - paragraph [ref=e9]: PulseTrade
+      - generic [ref=e10]: AUTOMATED TRADING CONTROL
+    - generic [ref=e11]:
+      - generic [ref=e12]: SIM MODE
+      - generic "시스템 연결 상태" [ref=e13]:
+        - generic [ref=e16]:
+          - generic [ref=e17]: KIS REST
+          - strong [ref=e18]: 미설정
+        - generic [ref=e21]:
+          - generic [ref=e22]: WebSocket
+          - strong [ref=e23]: 끊김
+        - generic [ref=e26]:
+          - generic [ref=e27]: Telegram
+          - strong [ref=e28]: 미설정
+    - button "긴급 정지 활성화" [ref=e30] [cursor=pointer]:
+      - generic [ref=e31]: ■
+      - generic [ref=e32]:
+        - generic [ref=e33]: EMERGENCY
+        - text: 긴급 STOP
+  - main [ref=e34]:
+    - generic [ref=e35]:
+      - generic [ref=e36]:
+        - generic [ref=e37]:
+          - paragraph [ref=e38]: ACCOUNT
+          - heading "계좌 요약" [level=2] [ref=e39]
+        - generic [ref=e40]: 손실 제한 정상
+      - generic [ref=e41]:
+        - article [ref=e42]:
+          - generic [ref=e43]: 예수금
+          - strong [ref=e44]: ₩0
+        - article [ref=e45]:
+          - generic [ref=e46]: 총 평가금액
+          - strong [ref=e47]: ₩0
+        - article [ref=e48]:
+          - generic [ref=e49]: 오늘 실현손익
+          - strong [ref=e50]: "-"
+        - article [ref=e51]:
+          - generic [ref=e52]: 오늘 미실현손익
+          - strong [ref=e53]: ₩0
+        - article [ref=e54]:
+          - generic [ref=e55]: 오늘 주문 횟수
+          - strong [ref=e56]: 0 회
+        - article [ref=e57]:
+          - generic [ref=e58]: 오늘 손실 제한
+          - strong [ref=e59]: 여유
+    - generic [ref=e60]:
+      - generic [ref=e61]:
+        - generic [ref=e62]:
+          - paragraph [ref=e63]: WATCHED SYMBOL
+          - generic [ref=e64]:
+            - heading "종목명 확인 중" [level=2] [ref=e65]
+            - generic [ref=e66]: "005930"
+        - generic [ref=e67]:
+          - strong [ref=e68]: "-"
+          - generic [ref=e69]: +0.00%
+      - generic [ref=e70]:
+        - generic [ref=e71]:
+          - generic [ref=e72]:
+            - generic [ref=e73]: 당일 1분봉
+            - emphasis [ref=e74]: 대기
+          - generic [ref=e75]: 분봉 데이터를 기다리는 중입니다.
+          - tablist "차트 기간" [ref=e76]:
+            - tab "1분" [selected] [ref=e77] [cursor=pointer]
+            - tab "일봉" [ref=e78] [cursor=pointer]
+            - tab "주봉" [ref=e79] [cursor=pointer]
+            - tab "월봉" [ref=e80] [cursor=pointer]
+        - complementary [ref=e81]:
+          - generic [ref=e82]:
+            - generic [ref=e83]: 전략 점수
+            - strong [ref=e84]: "0.0"
+            - emphasis [ref=e85]: WAIT
+          - generic [ref=e86]:
+            - generic [ref=e87]:
+              - generic [ref=e88]: BUY
+              - strong [ref=e89]: 70점 이상
+            - generic [ref=e90]:
+              - generic [ref=e91]: SELL
+              - strong [ref=e92]: "-60점 이하"
+            - generic [ref=e93]:
+              - generic [ref=e94]: EXIT
+              - strong [ref=e95]: "-80점 이하"
+            - generic [ref=e96]:
+              - generic [ref=e97]: WAIT
+              - strong [ref=e98]: 그 외 구간
+          - paragraph [ref=e100]: 전략 점수는 실시간 데이터가 준비되면 표시됩니다.
+    - generic [ref=e101]:
+      - generic [ref=e102]:
+        - generic [ref=e103]:
+          - generic [ref=e104]:
+            - paragraph [ref=e105]: MANUAL ORDER
+            - heading "수동 주문" [level=2] [ref=e106]
+          - generic [ref=e107]: SIM
+        - generic [ref=e108]:
+          - generic [ref=e109]:
+            - generic [ref=e110]: 종목코드
+            - textbox "종목코드" [ref=e111]:
+              - /placeholder: 6자리 코드
+              - text: "005930"
+          - generic [ref=e112]:
+            - generic [ref=e113]:
+              - generic [ref=e114]: 주문 가격
+              - generic [ref=e115]:
+                - spinbutton "주문 가격 원" [ref=e116]
+                - emphasis [ref=e117]: 원
+            - generic [ref=e118]:
+              - generic [ref=e119]: 수량
+              - generic [ref=e120]:
+                - spinbutton "수량 주" [ref=e121]: "1"
+                - emphasis [ref=e122]: 주
+          - generic [ref=e123]:
+            - generic [ref=e124]: 예상 주문금액
+            - strong [ref=e125]: 0원
+          - generic [ref=e126] [cursor=pointer]:
+            - checkbox "수동 주문 기능 활성화" [ref=e127]
+            - generic [ref=e128]: 수동 주문 기능 활성화
+          - generic [ref=e129]:
+            - button "매수" [disabled] [ref=e130]
+            - button "매도" [disabled] [ref=e131]
+      - generic [ref=e132]:
+        - generic [ref=e133]:
+          - generic [ref=e134]:
+            - paragraph [ref=e135]: STRATEGY ENGINE
+            - heading "전략 제어" [level=2] [ref=e136]
+          - generic [ref=e137]: OFFLINE
+        - generic [ref=e138]:
+          - generic [ref=e139]:
+            - generic [ref=e140]:
+              - strong [ref=e141]: ORB 전략
+              - generic [ref=e142]: 09:00–09:05 범위 돌파
+            - generic [ref=e143]:
+              - checkbox [checked] [disabled]
+          - generic [ref=e145]:
+            - generic [ref=e146]:
+              - strong [ref=e147]: VWAP 필터
+              - generic [ref=e148]: 당일 거래량 가중 평균가 상회
+            - generic [ref=e149]:
+              - checkbox [checked] [disabled]
+          - generic [ref=e151]:
+            - generic [ref=e152]:
+              - strong [ref=e153]: 거래량 급증 필터
+              - generic [ref=e154]: 직전 20분 평균 대비 2배
+            - generic [ref=e155]:
+              - checkbox [checked] [disabled]
+          - generic [ref=e157]:
+            - generic [ref=e158]:
+              - strong [ref=e159]: 자동주문 희망 상태
+              - generic [ref=e160]: 브로커 및 전략 데이터 대기 중
+            - generic [ref=e161]:
+              - checkbox
+        - generic [ref=e164]: "감시 종목: 미설정"
+        - generic [ref=e165]: 자동 주문이 비활성화되어 있습니다.
+    - generic [ref=e167]:
+      - generic [ref=e168]:
+        - generic [ref=e169]:
+          - paragraph [ref=e170]: POSITIONS
+          - heading "보유 종목" [level=2] [ref=e171]
+        - generic [ref=e172]: 0 종목
+      - table [ref=e174]:
+        - rowgroup [ref=e175]:
+          - row "종목코드 종목명 보유수량 평균단가 현재가 평가손익 수익률" [ref=e176]:
+            - columnheader "종목코드" [ref=e177]
+            - columnheader "종목명" [ref=e178]
+            - columnheader "보유수량" [ref=e179]
+            - columnheader "평균단가" [ref=e180]
+            - columnheader "현재가" [ref=e181]
+            - columnheader "평가손익" [ref=e182]
+            - columnheader "수익률" [ref=e183]
+        - rowgroup [ref=e184]:
+          - row "현재 보유 중인 종목이 없습니다." [ref=e185]:
+            - cell "현재 보유 중인 종목이 없습니다." [ref=e186]
+    - generic [ref=e187]:
+      - generic [ref=e188]:
+        - generic [ref=e189]:
+          - paragraph [ref=e190]: ORDER LOG
+          - heading "주문 로그" [level=2] [ref=e191]
+        - generic [ref=e192]: 최근 0건
+      - table [ref=e194]:
+        - rowgroup [ref=e195]:
+          - row "시간 종목 구분 가격 주문/체결 상태 출처 동작 메시지" [ref=e196]:
+            - columnheader "시간" [ref=e197]
+            - columnheader "종목" [ref=e198]
+            - columnheader "구분" [ref=e199]
+            - columnheader "가격" [ref=e200]
+            - columnheader "주문/체결" [ref=e201]
+            - columnheader "상태" [ref=e202]
+            - columnheader "출처" [ref=e203]
+            - columnheader "동작" [ref=e204]
+            - columnheader "메시지" [ref=e205]
+        - rowgroup [ref=e206]:
+          - row "주문 기록이 없습니다." [ref=e207]:
+            - cell "주문 기록이 없습니다." [ref=e208]
+    - generic [ref=e209]:
+      - generic [ref=e210]:
+        - generic [ref=e211]:
+          - paragraph [ref=e212]: SYSTEM LOG
+          - heading "시스템 이벤트" [level=2] [ref=e213]
+        - generic [ref=e214]: LIVE
+      - log [ref=e216]:
+        - article [ref=e217]:
+          - time [ref=e218]: 12시 38분 51초
+          - generic [ref=e219]: SYSTEM
+          - generic [ref=e220]: INFO
+          - paragraph [ref=e221]: PulseTrade 대시보드가 시작되었습니다.
+  - contentinfo [ref=e222]:
+    - generic [ref=e223]: PulseTrade MVP
+    - generic [ref=e224]: 기본 주문 비활성화 · RiskManager 필수 · 수익을 보장하지 않습니다.

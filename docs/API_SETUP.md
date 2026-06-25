@@ -32,4 +32,13 @@ cd backend
 .\.venv\Scripts\python.exe scripts\check_kis_account.py
 ```
 
+실전 주문 전에는 다음 사전점검을 먼저 실행합니다. 이 명령은 주문을 전송하지 않고 토큰, 계좌조회, 현재가, 주문가능금액 조회까지만 확인합니다.
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe scripts\check_kis_live_preflight.py
+```
+
+`KIS_LIVE_PREFLIGHT_OK`가 나오기 전에는 `ENABLE_LIVE_TRADING=true`로 전환하지 않습니다.
+
 공식 확인 전 남은 TODO를 임의 값으로 교체하지 않습니다.

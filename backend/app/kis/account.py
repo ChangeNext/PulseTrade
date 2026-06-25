@@ -43,7 +43,7 @@ class KISAccountService:
         product_code: str,
         *,
         paper: bool = False,
-        cache_seconds: float = 3.0,
+        cache_seconds: float = 15.0,
     ) -> None:
         if not account_number.isdigit() or len(account_number) != 8:
             raise KISConfigurationError("KIS account number must be the first 8 digits")
@@ -152,4 +152,3 @@ class KISAccountService:
             return Decimal(normalized)
         except InvalidOperation:
             return Decimal("0")
-

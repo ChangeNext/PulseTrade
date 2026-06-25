@@ -5,6 +5,7 @@ import type { ManualOrderInput } from "../types/order";
 
 interface ManualOrderPanelProps {
   mode: "SIM" | "PAPER" | "LIVE";
+  liveEnabled: boolean;
   emergencyStopped: boolean;
   onSubmitted: () => void;
   onSystemMessage: (message: string, error?: boolean) => void;
@@ -46,7 +47,7 @@ function ConfirmModal({ order, mode, busy, onCancel, onConfirm }: ConfirmModalPr
   );
 }
 
-export function ManualOrderPanel({ mode, emergencyStopped, onSubmitted, onSystemMessage }: ManualOrderPanelProps) {
+export function ManualOrderPanel({ mode, liveEnabled, emergencyStopped, onSubmitted, onSystemMessage }: ManualOrderPanelProps) {
   const [symbol, setSymbol] = useState("005930");
   const [quantity, setQuantity] = useState(1);
   const [price, setPrice] = useState(0);
@@ -56,7 +57,8 @@ export function ManualOrderPanel({ mode, emergencyStopped, onSubmitted, onSystem
   const [message, setMessage] = useState("");
 
   const valid = /^\d{6}$/.test(symbol) && quantity > 0 && price > 0;
-  const disabled = !armed || !valid || emergencyStopped || busy || mode === "LIVE";
+  const liveLocked = mode === "LIVE" && !liveEnabled;
+  const disabled = !armed || !valid || emergencyStopped || busy || liveLocked;
 
   function requestConfirmation(event: FormEvent, side: "BUY" | "SELL") {
     event.preventDefault();
@@ -82,7 +84,8 @@ export function ManualOrderPanel({ mode, emergencyStopped, onSubmitted, onSystem
   return (
     <section className={`panel manual-order-panel ${mode === "LIVE" ? "live-order-panel" : ""}`}>
       <div className="panel-heading"><div><p className="section-label">MANUAL ORDER</p><h2>수동 주문</h2></div><span className={`mode-chip mode-${mode.toLowerCase()}`}>{mode}</span></div>
-      {mode === "LIVE" && <div className="inline-live-warning"><strong>LIVE LOCKED</strong> 실계좌 주문 전송은 비활성화되어 있습니다.</div>}
+      {liveLocked && <div className="inline-live-warning"><strong>LIVE LOCKED</strong> 실계좌 주문 전송은 비활성화되어 있습니다.</div>}
+      {mode === "LIVE" && liveEnabled && <div className="inline-live-warning"><strong>LIVE ENABLED</strong> 실계좌 주문 전송 전 확인창이 표시됩니다.</div>}
       <form className="manual-order-form">
         <label><span>종목코드</span><input value={symbol} onChange={(event) => setSymbol(event.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" placeholder="6자리 코드" /></label>
         <div className="split-fields"><label><span>주문 가격</span><div className="input-suffix"><input type="number" min="1" value={price || ""} onChange={(event) => setPrice(Number(event.target.value))} placeholder="0" /><em>원</em></div></label><label><span>수량</span><div className="input-suffix"><input type="number" min="1" value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} /><em>주</em></div></label></div>
@@ -90,7 +93,7 @@ export function ManualOrderPanel({ mode, emergencyStopped, onSubmitted, onSystem
         <label className="arm-control"><input type="checkbox" checked={armed} onChange={(event) => setArmed(event.target.checked)} disabled={emergencyStopped} /><span>수동 주문 기능 활성화</span></label>
         <div className="order-actions"><button type="submit" className="button buy-button" disabled={disabled} onClick={(event) => requestConfirmation(event, "BUY")}>매수</button><button type="submit" className="button sell-button" disabled={disabled} onClick={(event) => requestConfirmation(event, "SELL")}>매도</button></div>
         {emergencyStopped && <p className="blocked-message">긴급 STOP 상태에서는 주문할 수 없습니다.</p>}
-        {mode === "LIVE" && <p className="blocked-message">LIVE 주문 라우팅은 구현 범위에서 잠겨 있습니다.</p>}
+        {liveLocked && <p className="blocked-message">LIVE 주문 라우팅은 현재 설정에서 잠겨 있습니다.</p>}
         {message && <p className="form-message">{message}</p>}
       </form>
       {pendingSide && <ConfirmModal order={{ symbol, side: pendingSide, quantity, price }} mode={mode} busy={busy} onCancel={() => setPendingSide(null)} onConfirm={sendOrder} />}

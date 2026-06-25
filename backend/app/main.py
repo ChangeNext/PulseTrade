@@ -19,6 +19,7 @@ from app.kis.order import KISOrderService
 from app.kis.websocket import KISWebSocketClient
 from app.notifications.telegram import TelegramNotifier
 from app.schemas.account import AccountSummary, Position
+from app.schemas.market import MarketBar, MarketQuote
 from app.schemas.order import CancelOrderResponse, KillSwitchRequest, ManualOrderRequest, OrderResponse
 from app.schemas.strategy import AutomationRequest, StrategyStatus
 from app.strategies.runtime import StrategyRuntime
@@ -40,7 +41,7 @@ def market_is_open() -> bool:
 
 async def reconciliation_loop(app: FastAPI) -> None:
     while True:
-        await asyncio.sleep(settings.order_reconcile_interval_seconds)
+        await asyncio.sleep(max(settings.order_reconcile_interval_seconds, 15.0))
         service: ReconciliationService | None = app.state.reconciliation
         if service is None:
             continue
@@ -79,6 +80,10 @@ async def lifespan(app: FastAPI):
     kis_client = None
     auth = None
     if settings.kis_configured:
+        if settings.trading_mode == TradingMode.PAPER and not settings.kis_is_paper:
+            raise RuntimeError("PAPER mode requires KIS paper base URL")
+        if settings.trading_mode == TradingMode.LIVE and not settings.kis_is_live:
+            raise RuntimeError("LIVE mode requires KIS live base URL")
         kis_client = KISClient(settings.kis_base_url, settings.kis_app_key, settings.kis_app_secret)
         auth = KISAuthService(kis_client)
         app.state.kis_client = kis_client
@@ -91,24 +96,24 @@ async def lifespan(app: FastAPI):
         )
         app.state.market_service = KISMarketService(kis_client, auth)
 
-    paper_order_service = None
+    order_service = None
     if (
-        settings.trading_mode == TradingMode.PAPER
+        settings.trading_mode in {TradingMode.PAPER, TradingMode.LIVE}
         and kis_client is not None
         and auth is not None
-        and settings.kis_is_paper
+        and (settings.trading_mode != TradingMode.LIVE or settings.enable_live_trading)
     ):
-        paper_order_service = KISOrderService(
+        order_service = KISOrderService(
             kis_client,
             auth,
             settings.kis_account_number,
             settings.kis_account_product_code,
-            paper=True,
+            paper=settings.trading_mode == TradingMode.PAPER,
         )
-        app.state.kis_order_service = paper_order_service
+        app.state.kis_order_service = order_service
 
     app.state.engine = ExecutionEngine(
-        settings, risk_manager, OrderManager(), notifier, paper_order_service
+        settings, risk_manager, OrderManager(), notifier, order_service
     )
     app.state.engine.context.market_open = (
         True if settings.trading_mode == TradingMode.SIM else market_is_open()
@@ -128,16 +133,19 @@ async def lifespan(app: FastAPI):
         async with AsyncSessionFactory() as session:
             await app.state.sim_broker.restore(TradingRepository(session))
 
-    if paper_order_service is not None and app.state.kis_account_service is not None:
+    if order_service is not None and app.state.kis_account_service is not None:
         app.state.reconciliation = ReconciliationService(
             app.state.engine,
             app.state.kis_account_service,
-            paper_order_service,
+            order_service,
             app.state.market_service,
         )
         try:
             async with AsyncSessionFactory() as session:
-                await app.state.reconciliation.synchronize(TradingRepository(session))
+                await asyncio.wait_for(
+                    app.state.reconciliation.synchronize(TradingRepository(session)),
+                    timeout=8,
+                )
         except Exception:
             pass
         tasks.append(asyncio.create_task(reconciliation_loop(app)))
@@ -188,6 +196,10 @@ def account_service_from(request: Request) -> KISAccountService | None:
     return request.app.state.kis_account_service
 
 
+def market_service_from(request: Request) -> KISMarketService | None:
+    return request.app.state.market_service
+
+
 def raise_kis_http_error(error: Exception) -> None:
     if isinstance(error, KISAPIError):
         raise HTTPException(
@@ -207,7 +219,11 @@ async def health(request: Request) -> dict:
     return {
         "status": "ok",
         "mode": settings.trading_mode,
-        "live_enabled": False,
+        "live_enabled": bool(
+            settings.trading_mode == TradingMode.LIVE
+            and settings.enable_live_trading
+            and request.app.state.kis_order_service is not None
+        ),
         "kis_configured": settings.kis_configured,
         "rest_connected": bool(
             account_service_from(request)
@@ -316,6 +332,54 @@ async def positions(request: Request) -> list[Position]:
     ]
 
 
+@app.get("/api/market/{symbol}", response_model=MarketQuote)
+async def market_quote(symbol: str, request: Request) -> MarketQuote:
+    if not symbol.isdigit() or len(symbol) != 6:
+        raise HTTPException(status_code=422, detail="Symbol must be a 6-digit stock code")
+    service = market_service_from(request)
+    if service is None:
+        raise HTTPException(status_code=503, detail="KIS market service is not configured")
+    try:
+        quote = await service.get_current_price(symbol)
+    except (KISAPIError, KISConfigurationError) as error:
+        raise_kis_http_error(error)
+    return MarketQuote(
+        symbol=quote.symbol,
+        name=quote.name,
+        price=quote.price,
+        volume=quote.volume,
+    )
+
+
+@app.get("/api/market/{symbol}/bars", response_model=list[MarketBar])
+async def market_bars(symbol: str, request: Request, period: str = "1m") -> list[MarketBar]:
+    if not symbol.isdigit() or len(symbol) != 6:
+        raise HTTPException(status_code=422, detail="Symbol must be a 6-digit stock code")
+    if period not in {"1m", "day", "week", "month"}:
+        raise HTTPException(status_code=422, detail="Unsupported chart period")
+    service = market_service_from(request)
+    if service is None:
+        raise HTTPException(status_code=503, detail="KIS market service is not configured")
+    try:
+        bars = (
+            await service.get_minute_bars(symbol, max_pages=1)
+            if period == "1m"
+            else await service.get_period_bars(symbol, period)
+        )
+    except (KISAPIError, KISConfigurationError) as error:
+        raise_kis_http_error(error)
+    return [
+        MarketBar(
+            time=bar.time,
+            price=bar.price,
+            high=bar.high,
+            low=bar.low,
+            volume=bar.volume,
+        )
+        for bar in bars
+    ]
+
+
 @app.get("/api/orders")
 async def recent_orders(session: SessionDep) -> list[dict]:
     records = await TradingRepository(session).recent_orders()
@@ -373,7 +437,7 @@ async def cancel_order(order_id: str, request: Request, session: SessionDep) -> 
 async def reconcile(request: Request, session: SessionDep) -> dict:
     service = request.app.state.reconciliation
     if service is None:
-        raise HTTPException(status_code=503, detail="PAPER reconciliation is not configured")
+        raise HTTPException(status_code=503, detail="Broker reconciliation is not configured")
     try:
         result = await service.synchronize(TradingRepository(session))
     except Exception as error:
@@ -392,6 +456,14 @@ async def kill_switch(payload: KillSwitchRequest, request: Request, session: Ses
 @app.post("/api/control/automation")
 async def automation(payload: AutomationRequest, request: Request, session: SessionDep) -> dict:
     engine = engine_from(request)
+    if settings.trading_mode == TradingMode.LIVE and payload.enabled:
+        engine.automation_desired = False
+        await TradingRepository(session).set_runtime_state("automation_desired", "false")
+        return {
+            "enabled": False,
+            "desired": False,
+            "message": "LIVE automation is disabled until a separate live strategy release",
+        }
     if payload.enabled and engine.context.emergency_stopped:
         return {
             "enabled": False,

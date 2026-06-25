@@ -6,10 +6,24 @@ from time import monotonic
 from app.kis.auth import KISAuthService
 from app.kis.client import KISClient
 
+KNOWN_STOCK_NAMES = {
+    "005930": "삼성전자",
+    "000660": "SK하이닉스",
+    "035420": "NAVER",
+    "035720": "카카오",
+    "005380": "현대차",
+    "000270": "기아",
+    "373220": "LG에너지솔루션",
+    "207940": "삼성바이오로직스",
+    "006400": "삼성SDI",
+    "051910": "LG화학",
+}
+
 
 @dataclass(frozen=True)
 class Quote:
     symbol: str
+    name: str
     price: Decimal
     volume: int
 
@@ -30,6 +44,9 @@ class KISMarketService:
         self.auth = auth
         self._trading_day_cache: tuple[str, bool] | None = None
         self._vi_cache: dict[str, tuple[float, bool]] = {}
+        self._quote_cache: dict[str, tuple[float, Quote]] = {}
+        self._minute_cache: dict[str, tuple[float, list[MinuteBar]]] = {}
+        self._period_cache: dict[str, tuple[float, list[MinuteBar]]] = {}
 
     async def is_trading_day(self) -> bool:
         today = datetime.now().strftime("%Y%m%d")
@@ -51,6 +68,9 @@ class KISMarketService:
         return is_open
 
     async def get_current_price(self, symbol: str) -> Quote:
+        cached = self._quote_cache.get(symbol)
+        if cached and monotonic() - cached[0] < 2:
+            return cached[1]
         await self.auth.ensure_access_token()
         body = await self.client.request(
             "GET",
@@ -59,11 +79,18 @@ class KISMarketService:
             params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": symbol},
         )
         output = body.get("output") or {}
-        return Quote(
+        quote = Quote(
             symbol=symbol,
+            name=str(
+                output.get("hts_kor_isnm")
+                or output.get("prdt_name")
+                or KNOWN_STOCK_NAMES.get(symbol, "")
+            ),
             price=Decimal(str(output.get("stck_prpr") or "0")),
             volume=int(output.get("acml_vol") or 0),
         )
+        self._quote_cache[symbol] = (monotonic(), quote)
+        return quote
 
     async def is_vi_active(self, symbol: str) -> bool:
         cached = self._vi_cache.get(symbol)
@@ -101,11 +128,15 @@ class KISMarketService:
         self._vi_cache[symbol] = (monotonic(), active)
         return active
 
-    async def get_minute_bars(self, symbol: str) -> list[MinuteBar]:
+    async def get_minute_bars(self, symbol: str, *, max_pages: int = 14) -> list[MinuteBar]:
+        cache_key = f"{symbol}:{max_pages}"
+        cached = self._minute_cache.get(cache_key)
+        if cached and monotonic() - cached[0] < 15:
+            return cached[1]
         await self.auth.ensure_access_token()
         cursor = datetime.now()
         found: dict[str, MinuteBar] = {}
-        for _ in range(14):
+        for _ in range(max_pages):
             body = await self.client.request(
                 "GET",
                 "/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice",
@@ -139,4 +170,49 @@ class KISMarketService:
             cursor = cursor.replace(
                 hour=earliest.hour, minute=earliest.minute, second=earliest.second
             )
-        return [found[key] for key in sorted(found)]
+        bars = [found[key] for key in sorted(found)]
+        self._minute_cache[cache_key] = (monotonic(), bars)
+        return bars
+
+    async def get_period_bars(self, symbol: str, period: str) -> list[MinuteBar]:
+        period_code = {"day": "D", "week": "W", "month": "M"}[period]
+        cache_key = f"{symbol}:{period_code}"
+        cached = self._period_cache.get(cache_key)
+        if cached and monotonic() - cached[0] < 60:
+            return cached[1]
+
+        end = datetime.now()
+        start_days = {"D": 180, "W": 365 * 3, "M": 365 * 6}[period_code]
+        start = end - timedelta(days=start_days)
+        await self.auth.ensure_access_token()
+        body = await self.client.request(
+            "GET",
+            "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+            tr_id="FHKST03010100",
+            params={
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_INPUT_ISCD": symbol,
+                "FID_INPUT_DATE_1": start.strftime("%Y%m%d"),
+                "FID_INPUT_DATE_2": end.strftime("%Y%m%d"),
+                "FID_PERIOD_DIV_CODE": period_code,
+                "FID_ORG_ADJ_PRC": "0",
+            },
+        )
+        rows = body.get("output2") or []
+        if isinstance(rows, dict):
+            rows = [rows]
+        bars = [
+            MinuteBar(
+                symbol=symbol,
+                time=str(row.get("stck_bsop_date") or ""),
+                price=Decimal(str(row.get("stck_clpr") or "0")),
+                high=Decimal(str(row.get("stck_hgpr") or "0")),
+                low=Decimal(str(row.get("stck_lwpr") or "0")),
+                volume=int(row.get("acml_vol") or 0),
+            )
+            for row in rows
+            if row.get("stck_bsop_date")
+        ]
+        bars = sorted(bars, key=lambda item: item.time)
+        self._period_cache[cache_key] = (monotonic(), bars)
+        return bars

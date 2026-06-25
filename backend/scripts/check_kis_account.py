@@ -1,11 +1,15 @@
 """민감값이나 잔액을 출력하지 않는 KIS 읽기 전용 연결 점검."""
 
 import asyncio
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.config import get_settings
 from app.kis.account import KISAccountService
 from app.kis.auth import KISAuthService
-from app.kis.client import KISClient
+from app.kis.client import KISAPIError, KISClient
 
 
 async def main() -> None:
@@ -25,10 +29,15 @@ async def main() -> None:
         balance = await service.get_balance(force=True)
         print("KIS_ACCOUNT_READ_OK")
         print(f"POSITION_COUNT={len(balance.positions)}")
+    except KISAPIError as exc:
+        print("KIS_ACCOUNT_READ_FAILED")
+        print(f"STATUS_CODE={exc.status_code}")
+        print(f"ERROR_CODE={exc.code}")
+        print(f"MESSAGE={exc}")
+        raise SystemExit(1) from exc
     finally:
         await client.close()
 
 
 if __name__ == "__main__":
     asyncio.run(main())
-

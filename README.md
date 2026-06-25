@@ -114,16 +114,17 @@ CSV 필수 열은 `timestamp,symbol,close,high,low,volume,best_ask,best_bid,ask_
 
 ## LIVE 전환 조건
 
-현재 LIVE 어댑터가 연결되지 않아 실제 주문은 항상 거부됩니다. 이후 별도 단계에서 구현하더라도 다음 조건을 모두 만족해야 합니다.
+LIVE는 수동 지정가 주문만 단계적으로 검증합니다. 자동매매 LIVE 주문은 별도 릴리스 전까지 비활성화되어 있습니다. 다음 조건을 모두 만족해야 수동 주문 전송이 열립니다.
 
 1. `.env`의 `TRADING_MODE=LIVE`
 2. `ENABLE_LIVE_TRADING=true`
 3. 요청마다 `live_confirmation`이 설정된 확인 문구와 정확히 일치
 4. RiskManager 승인
-5. 공식 KIS 문서로 검증한 주문 서비스가 실행 엔진에 주입됨
+5. `KIS_BASE_URL`이 실전 REST URL인 `openapi.koreainvestment.com`을 사용
 6. 시작 시 잔고·포지션·미체결 주문 동기화 완료
+7. `scripts/check_kis_live_preflight.py`가 주문 없이 성공
 
-운영 전에는 모의투자 계좌, 주문 단위 테스트, 장애 복구 테스트를 별도로 수행해야 합니다.
+운영 전에는 주문 단위 테스트, 장애 복구 테스트, 최소 수량 실전 주문·취소 리허설을 별도로 수행해야 합니다.
 
 ## 구조
 

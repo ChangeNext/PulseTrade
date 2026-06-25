@@ -76,7 +76,10 @@ class ReconciliationService:
         except Exception as error:
             context.api_connected = False
             self.last_error = str(error)
-            await repository.add_event("RECONCILE_ERROR", str(error), level="ERROR")
+            try:
+                await repository.add_event("RECONCILE_ERROR", str(error), level="ERROR")
+            except Exception:
+                pass
             raise
 
     async def _apply_snapshot(
@@ -103,7 +106,7 @@ class ReconciliationService:
                 side=snapshot.side,
                 quantity=snapshot.quantity,
                 price=snapshot.price,
-                mode=TradingMode.PAPER,
+                mode=self.engine.settings.trading_mode,
                 state=snapshot.state,
                 source="RECOVERY",
                 message="Recovered from KIS",

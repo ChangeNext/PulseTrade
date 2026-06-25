@@ -4,11 +4,13 @@ import { AccountSummary } from "./components/AccountSummary";
 import { ConnectionStatus } from "./components/ConnectionStatus";
 import { KillSwitchButton } from "./components/KillSwitchButton";
 import { ManualOrderPanel } from "./components/ManualOrderPanel";
+import { MarketChartPanel } from "./components/MarketChartPanel";
 import { OrderLogTable } from "./components/OrderLogTable";
 import { PositionTable } from "./components/PositionTable";
 import { StrategyPanel } from "./components/StrategyPanel";
 import { SystemLog } from "./components/SystemLog";
 import type { AccountSummaryData, Position } from "./types/account";
+import type { ChartPeriod, MarketBar, MarketQuote } from "./types/market";
 import type { Order } from "./types/order";
 import type { HealthStatus, StrategyStatusData, SystemLogEntry } from "./types/strategy";
 
@@ -18,6 +20,10 @@ export default function App() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [strategy, setStrategy] = useState<StrategyStatusData | null>(null);
+  const [quote, setQuote] = useState<MarketQuote | null>(null);
+  const [bars, setBars] = useState<MarketBar[]>([]);
+  const [chartPeriod, setChartPeriod] = useState<ChartPeriod>("1m");
+  const [marketError, setMarketError] = useState("");
   const [error, setError] = useState("");
   const [logs, setLogs] = useState<SystemLogEntry[]>([]);
   const previousHealth = useRef<HealthStatus | null>(null);
@@ -34,6 +40,15 @@ export default function App() {
       const [nextHealth, nextAccount, nextPositions, nextOrders, nextStrategy] = await Promise.all([
         api.health(), api.account(), api.positions(), api.orders(), api.strategy(),
       ]);
+      const symbol = nextStrategy.watched_symbols?.[0] ?? "005930";
+      try {
+        const nextQuote = await api.marketQuote(symbol);
+        setQuote(nextQuote);
+        const nextBars = await api.marketBars(symbol, chartPeriod);
+        setBars(nextBars); setMarketError("");
+      } catch (caught) {
+        setMarketError(caught instanceof Error ? caught.message : "시세 데이터를 가져오지 못했습니다.");
+      }
       const previous = previousHealth.current;
       if (!previous) {
         appendLog("API", "INFO", "REST API 연결이 확인되었습니다.");
@@ -49,12 +64,12 @@ export default function App() {
       const message = caught instanceof Error ? caught.message : "백엔드 연결에 실패했습니다.";
       setError(message); appendLog("API", "ERROR", message);
     }
-  }, [appendLog]);
+  }, [appendLog, chartPeriod]);
 
   useEffect(() => {
     appendLog("SYSTEM", "INFO", "PulseTrade 대시보드가 시작되었습니다.");
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 5000);
+    const timer = window.setInterval(() => void refresh(), 15000);
     return () => window.clearInterval(timer);
   }, [appendLog, refresh]);
 
@@ -82,6 +97,7 @@ export default function App() {
   }
 
   const mode = health?.mode ?? "SIM";
+  const liveEnabled = health?.live_enabled ?? false;
   const stopped = health?.emergency_stopped ?? false;
 
   return (
@@ -92,14 +108,16 @@ export default function App() {
         <div className="emergency-dock"><KillSwitchButton stopped={stopped} onChange={toggleStop} /></div>
       </header>
 
-      {mode === "LIVE" && <div className="live-mode-banner"><strong>LIVE 잠금 상태</strong><span>실계좌 주문 라우팅이 연결되지 않아 모든 주문이 거부됩니다.</span></div>}
+      {mode === "LIVE" && !liveEnabled && <div className="live-mode-banner"><strong>LIVE 잠금 상태</strong><span>실계좌 주문 라우팅이 현재 설정에서 비활성화되어 있습니다.</span></div>}
+      {mode === "LIVE" && liveEnabled && <div className="live-mode-banner"><strong>LIVE 수동 주문 활성</strong><span>자동매매는 비활성화되어 있고 수동 주문만 확인 절차 후 전송됩니다.</span></div>}
       {stopped && <div className="stop-banner"><strong>긴급 정지 상태</strong><span>신규 주문과 자동매매가 차단되었습니다.</span></div>}
       {error && <div className="error-banner"><strong>REST API 연결 오류</strong><span>{error}</span></div>}
 
       <main className="dashboard">
         <AccountSummary data={account} positions={positions} orders={orders} />
+        <MarketChartPanel quote={quote} bars={bars} strategy={strategy} error={marketError} period={chartPeriod} onPeriodChange={setChartPeriod} />
         <div className="control-grid">
-          <ManualOrderPanel mode={mode} emergencyStopped={stopped} onSubmitted={refresh} onSystemMessage={(message, isError) => appendLog(isError ? "RISK" : "ORDER", isError ? "BLOCK" : "INFO", message)} />
+          <ManualOrderPanel mode={mode} liveEnabled={liveEnabled} emergencyStopped={stopped} onSubmitted={refresh} onSystemMessage={(message, isError) => appendLog(isError ? "RISK" : "ORDER", isError ? "BLOCK" : "INFO", message)} />
           <StrategyPanel strategy={strategy} emergencyStopped={stopped} onAutoOrderToggle={toggleAutomation} />
         </div>
         <PositionTable positions={positions} />

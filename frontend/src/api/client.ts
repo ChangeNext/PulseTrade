@@ -1,4 +1,5 @@
 import type { AccountSummaryData, Position } from "../types/account";
+import type { ChartPeriod, MarketBar, MarketQuote } from "../types/market";
 import type { ManualOrderInput, Order } from "../types/order";
 import type { HealthStatus, StrategyStatusData } from "../types/strategy";
 
@@ -39,6 +40,24 @@ export const api = {
     }));
   },
   orders: () => request<Order[]>("/orders"),
+  marketQuote: async (symbol: string) => {
+    const quote = await request<MarketQuote>(`/market/${symbol}`);
+    return {
+      ...quote,
+      price: Number(quote.price),
+      volume: Number(quote.volume),
+    };
+  },
+  marketBars: async (symbol: string, period: ChartPeriod) => {
+    const bars = await request<MarketBar[]>(`/market/${symbol}/bars?period=${period}`);
+    return bars.map((bar) => ({
+      ...bar,
+      price: Number(bar.price),
+      high: Number(bar.high),
+      low: Number(bar.low),
+      volume: Number(bar.volume),
+    }));
+  },
   strategy: () => request<StrategyStatusData>("/strategy"),
   submitOrder: (order: ManualOrderInput) =>
     request<{ order_id: string; state: string; message: string }>("/orders/manual", {

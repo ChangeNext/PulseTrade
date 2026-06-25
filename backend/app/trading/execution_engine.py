@@ -20,7 +20,7 @@ class IdempotencyConflict(ValueError):
 
 
 class ExecutionEngine:
-    """모든 주문을 영속화하고 리스크 검사 후 SIM 또는 KIS PAPER로 전송한다."""
+    """모든 주문을 영속화하고 리스크 검사 후 SIM 또는 KIS로 전송한다."""
 
     def __init__(
         self,
@@ -28,19 +28,19 @@ class ExecutionEngine:
         risk_manager: RiskManager,
         order_manager: OrderManager,
         notifier: Notifier,
-        paper_order_service: KISOrderService | None = None,
+        order_service: KISOrderService | None = None,
     ) -> None:
         self.settings = settings
         self.risk_manager = risk_manager
         self.order_manager = order_manager
         self.notifier = notifier
-        self.paper_order_service = paper_order_service
-        paper = settings.trading_mode == TradingMode.PAPER
+        self.order_service = order_service
+        broker_mode = settings.trading_mode in {TradingMode.PAPER, TradingMode.LIVE}
         self.context = RiskContext(
-            api_connected=not paper,
-            websocket_connected=not paper,
-            account_synchronized=not paper,
-            orders_synchronized=not paper,
+            api_connected=not broker_mode,
+            websocket_connected=not broker_mode,
+            account_synchronized=not broker_mode,
+            orders_synchronized=not broker_mode,
         )
         self.automation_desired = False
         self.automation_enabled = False
@@ -97,13 +97,24 @@ class ExecutionEngine:
             quantity=request.quantity,
             price=Decimal(request.price),
         )
+        if self.settings.trading_mode == TradingMode.LIVE:
+            rejection = self._live_rejection_reason(request)
+            if rejection is not None:
+                self.order_manager.transition(order_id, OrderState.REJECTED)
+                await repository.update_order(
+                    record,
+                    state=OrderState.REJECTED,
+                    rejection_code=rejection,
+                    message="LIVE order preflight blocked the order",
+                )
+                return self._response(record)
         if (
-            self.settings.trading_mode == TradingMode.PAPER
-            and self.paper_order_service is not None
+            self.settings.trading_mode in {TradingMode.PAPER, TradingMode.LIVE}
+            and self.order_service is not None
             and intent.side.upper() == "BUY"
         ):
             try:
-                self.context.available_cash = await self.paper_order_service.get_orderable_cash(intent)
+                self.context.available_cash = await self.order_service.get_orderable_cash(intent)
             except (KISAPIError, KISConfigurationError, httpx.HTTPError) as error:
                 self.order_manager.transition(order_id, OrderState.REJECTED)
                 await repository.update_order(
@@ -149,28 +160,23 @@ class ExecutionEngine:
             await self.notifier.send("ORDER_SENT", f"{request.symbol} {request.side} SIM order")
             return self._response(record)
 
-        if self.settings.trading_mode == TradingMode.LIVE:
-            self.order_manager.transition(order_id, OrderState.REJECTED)
-            await repository.update_order(
-                record,
-                state=OrderState.REJECTED,
-                rejection_code="LIVE_NOT_IMPLEMENTED",
-                message="LIVE order routing is intentionally unavailable",
+        if self.order_service is None:
+            code = (
+                "LIVE_SERVICE_NOT_READY"
+                if self.settings.trading_mode == TradingMode.LIVE
+                else "PAPER_SERVICE_NOT_READY"
             )
-            return self._response(record)
-
-        if self.paper_order_service is None:
             self.order_manager.transition(order_id, OrderState.ERROR)
             await repository.update_order(
                 record,
                 state=OrderState.ERROR,
-                rejection_code="PAPER_SERVICE_NOT_READY",
-                message="KIS PAPER order service is not configured",
+                rejection_code=code,
+                message="KIS order service is not configured",
             )
             return self._response(record)
 
         try:
-            result = await self.paper_order_service.place_order(intent)
+            result = await self.order_service.place_order(intent)
         except (httpx.TimeoutException, httpx.TransportError) as error:
             self.order_manager.transition(order_id, OrderState.RECONCILING)
             await repository.update_order(
@@ -233,11 +239,11 @@ class ExecutionEngine:
                     self.context.pending_sell_quantities.get(record.symbol, 0) - remaining, 0
                 )
             return CancelOrderResponse(order_id=order_id, state=OrderState.CANCELED, message=record.message)
-        if self.paper_order_service is None or not record.broker_order_id or not record.broker_org_no:
+        if self.order_service is None or not record.broker_order_id or not record.broker_org_no:
             raise ValueError("Broker order identity is not available; reconcile before cancellation")
         await repository.update_order(record, state=OrderState.CANCEL_REQUESTED)
         try:
-            result = await self.paper_order_service.cancel_order(
+            result = await self.order_service.cancel_order(
                 broker_order_id=record.broker_order_id,
                 broker_org_no=record.broker_org_no,
                 quantity=remaining,
@@ -265,6 +271,7 @@ class ExecutionEngine:
     def refresh_effective_automation(self, strategy_ready: bool) -> bool:
         self.automation_enabled = bool(
             self.automation_desired
+            and self.settings.trading_mode != TradingMode.LIVE
             and not self.context.emergency_stopped
             and self.context.api_connected
             and self.context.websocket_connected
@@ -273,6 +280,15 @@ class ExecutionEngine:
             and strategy_ready
         )
         return self.automation_enabled
+
+    def _live_rejection_reason(self, request: ManualOrderRequest) -> str | None:
+        if not self.settings.enable_live_trading:
+            return "LIVE_TRADING_DISABLED"
+        if request.live_confirmation != self.settings.live_confirmation_phrase:
+            return "LIVE_CONFIRMATION_REQUIRED"
+        if not self.settings.kis_is_live:
+            return "LIVE_KIS_URL_MISMATCH"
+        return None
 
     def _register_pending(self, intent: OrderIntent) -> None:
         self.context.daily_order_count += 1

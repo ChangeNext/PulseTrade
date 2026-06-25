@@ -22,6 +22,7 @@ from app.strategies.orderbook_imbalance import OrderbookImbalanceStrategy
 from app.strategies.risk_filter import StrategyRiskFilter
 from app.strategies.signal_scorer import SignalScorer
 from app.strategies.trade_strength import TradeStrengthStrategy
+from app.strategies.trend_alignment import TrendAlignmentStrategy
 from app.strategies.volume_spike import VolumeSpikeStrategy
 from app.strategies.vwap_filter import VWAPFilter
 from app.trading.execution_engine import ExecutionEngine
@@ -113,6 +114,7 @@ class StrategyRuntime:
                 OrderbookImbalanceStrategy(),
                 TradeStrengthStrategy(),
                 MomentumScore(),
+                TrendAlignmentStrategy(),
             ),
             {
                 "volume_spike": Decimal(str(settings.signal_weight_volume)),
@@ -121,6 +123,7 @@ class StrategyRuntime:
                 "orderbook_imbalance": Decimal(str(settings.signal_weight_orderbook)),
                 "trade_strength": Decimal(str(settings.signal_weight_trade_strength)),
                 "momentum": Decimal(str(settings.signal_weight_momentum)),
+                "trend_alignment": Decimal(str(settings.signal_weight_trend)),
             },
             buy_threshold=Decimal(str(settings.signal_buy_threshold)),
             sell_threshold=Decimal(str(settings.signal_sell_threshold)),
