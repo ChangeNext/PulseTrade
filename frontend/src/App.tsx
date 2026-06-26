@@ -22,7 +22,7 @@ export default function App() {
   const [strategy, setStrategy] = useState<StrategyStatusData | null>(null);
   const [quote, setQuote] = useState<MarketQuote | null>(null);
   const [bars, setBars] = useState<MarketBar[]>([]);
-  const [chartPeriod, setChartPeriod] = useState<ChartPeriod>("1m");
+  const [chartPeriod, setChartPeriod] = useState<ChartPeriod>("10m");
   const [marketError, setMarketError] = useState("");
   const [error, setError] = useState("");
   const [logs, setLogs] = useState<SystemLogEntry[]>([]);

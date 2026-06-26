@@ -11,18 +11,24 @@ from app.kis.websocket import KISWebSocketClient, OrderBookTick, RealtimeTick
 from app.schemas.order import ManualOrderRequest
 from app.strategies.base import (
     MarketSnapshot,
+    MarketIndexSnapshot,
     OrderBookSnapshot,
+    PriceBar,
     ScoredSignal,
     SignalAction,
     SignalContext,
 )
-from app.strategies.momentum_score import MomentumScore
-from app.strategies.opening_range_breakout import ORBStrategy
-from app.strategies.orderbook_imbalance import OrderbookImbalanceStrategy
+from app.strategies.breakout_confirmation import BreakoutConfirmationStrategy
+from app.strategies.candle_quality import CandleQualityStrategy
+from app.strategies.market_regime import MarketRegimeStrategy
+from app.strategies.momentum_indicators import MomentumIndicatorsStrategy
+from app.strategies.moving_average_alignment import MovingAverageAlignmentStrategy
+from app.strategies.price_location import PriceLocationStrategy
+from app.strategies.pullback_quality import PullbackQualityStrategy
 from app.strategies.risk_filter import StrategyRiskFilter
+from app.strategies.risk_reward import RiskRewardStrategy
 from app.strategies.signal_scorer import SignalScorer
-from app.strategies.trade_strength import TradeStrengthStrategy
-from app.strategies.trend_alignment import TrendAlignmentStrategy
+from app.strategies.trend_structure import TrendStructureStrategy
 from app.strategies.volume_spike import VolumeSpikeStrategy
 from app.strategies.vwap_filter import VWAPFilter
 from app.trading.execution_engine import ExecutionEngine
@@ -42,7 +48,7 @@ class SymbolBars:
         price = Decimal(tick.price)
         existing = self.bars.get(minute)
         if existing is None:
-            self.bars[minute] = MinuteBar(tick.symbol, minute, price, price, price, tick.volume)
+            self.bars[minute] = MinuteBar(tick.symbol, minute, price, price, price, tick.volume, price)
         else:
             self.bars[minute] = MinuteBar(
                 tick.symbol,
@@ -51,16 +57,31 @@ class SymbolBars:
                 max(existing.high, price),
                 min(existing.low, price),
                 existing.volume + tick.volume,
+                existing.open if existing.open > 0 else existing.price,
             )
 
     def recent_prices(self) -> tuple[Decimal, ...]:
         return tuple(self.bars[key].price for key in sorted(self.bars))
 
+    def price_bars(self) -> tuple[PriceBar, ...]:
+        return tuple(
+            PriceBar(
+                time=bar.time,
+                open=bar.open if bar.open > 0 else bar.price,
+                high=bar.high,
+                low=bar.low,
+                close=bar.price,
+                volume=bar.volume,
+            )
+            for bar in (self.bars[key] for key in sorted(self.bars))
+        )
+
     def snapshot(self, symbol: str, now: datetime) -> MarketSnapshot | None:
         ordered = [self.bars[key] for key in sorted(self.bars)]
         opening = [bar for bar in ordered if "090000" <= bar.time < "090500"]
-        if not opening or len(ordered) < 21:
+        if len(ordered) < 21:
             return None
+        opening_source = opening or ordered[:5]
         current = ordered[-1]
         previous = ordered[-21:-1]
         total_volume = sum(bar.volume for bar in ordered)
@@ -72,7 +93,7 @@ class SymbolBars:
             symbol=symbol,
             timestamp=now,
             price=current.price,
-            opening_range_high=max(bar.high for bar in opening),
+            opening_range_high=max(bar.high for bar in opening_source),
             vwap=vwap,
             current_volume=current.volume,
             average_volume=average_volume,
@@ -96,6 +117,8 @@ class StrategyRuntime:
         self.order_supervisor = OrderSupervisor(settings, engine)
         self.symbols = settings.strategy_symbol_list
         self.series = {symbol: SymbolBars() for symbol in self.symbols}
+        self.daily_bars: dict[str, tuple[PriceBar, ...]] = {}
+        self.market_indices: tuple[MarketIndexSnapshot, ...] = ()
         self.orderbooks: dict[str, OrderBookSnapshot] = {}
         self.trade_strengths: dict[str, Decimal] = {}
         self.trading_halts: dict[str, bool] = {}
@@ -105,25 +128,34 @@ class StrategyRuntime:
         self.vi_refreshing: set[str] = set()
         self.vi_checked_at: dict[str, datetime] = {}
         self.latest_signals: dict[str, ScoredSignal] = {}
+        self.last_snapshot_refresh_at: datetime | None = None
         self._last_actions: dict[str, SignalAction] = {}
         self.scorer = SignalScorer(
             (
                 VolumeSpikeStrategy(Decimal(str(settings.strategy_volume_multiplier))),
+                PriceLocationStrategy(),
+                TrendStructureStrategy(),
+                BreakoutConfirmationStrategy(),
+                PullbackQualityStrategy(),
+                MovingAverageAlignmentStrategy(),
                 VWAPFilter(),
-                ORBStrategy(),
-                OrderbookImbalanceStrategy(),
-                TradeStrengthStrategy(),
-                MomentumScore(),
-                TrendAlignmentStrategy(),
+                CandleQualityStrategy(),
+                MomentumIndicatorsStrategy(),
+                RiskRewardStrategy(),
+                MarketRegimeStrategy(),
             ),
             {
                 "volume_spike": Decimal(str(settings.signal_weight_volume)),
+                "price_location": Decimal(str(settings.signal_weight_price_location)),
+                "trend_structure": Decimal(str(settings.signal_weight_trend_structure)),
+                "breakout_confirmation": Decimal(str(settings.signal_weight_breakout)),
+                "pullback_quality": Decimal(str(settings.signal_weight_pullback)),
+                "moving_average_alignment": Decimal(str(settings.signal_weight_moving_average)),
                 "vwap": Decimal(str(settings.signal_weight_vwap)),
-                "opening_range_breakout": Decimal(str(settings.signal_weight_orb)),
-                "orderbook_imbalance": Decimal(str(settings.signal_weight_orderbook)),
-                "trade_strength": Decimal(str(settings.signal_weight_trade_strength)),
-                "momentum": Decimal(str(settings.signal_weight_momentum)),
-                "trend_alignment": Decimal(str(settings.signal_weight_trend)),
+                "candle_quality": Decimal(str(settings.signal_weight_candle)),
+                "momentum_indicators": Decimal(str(settings.signal_weight_momentum_indicators)),
+                "risk_reward": Decimal(str(settings.signal_weight_risk_reward)),
+                "market_regime": Decimal(str(settings.signal_weight_market_regime)),
             },
             buy_threshold=Decimal(str(settings.signal_buy_threshold)),
             sell_threshold=Decimal(str(settings.signal_sell_threshold)),
@@ -145,6 +177,8 @@ class StrategyRuntime:
         for symbol in self.symbols:
             bars = await self.market.get_minute_bars(symbol)
             self.series[symbol].bars = {bar.time: bar for bar in bars}
+            self.daily_bars[symbol] = self._to_price_bars(await self.market.get_period_bars(symbol, "day"))
+        await self._refresh_market_indices()
         bars_ready = all(
             self.series[symbol].snapshot(symbol, datetime.now(KST)) is not None
             for symbol in self.symbols
@@ -231,6 +265,9 @@ class StrategyRuntime:
             orderbook=self.orderbooks.get(symbol),
             trade_strength=self.trade_strengths.get(symbol),
             recent_prices=series.recent_prices(),
+            intraday_bars=series.price_bars(),
+            daily_bars=self.daily_bars.get(symbol, ()),
+            market_indices=self.market_indices,
             already_held=self.engine.context.position_quantities.get(symbol, 0) > 0,
             has_pending_order=symbol in self.engine.context.pending_symbols,
             trading_halted=self.trading_halts.get(symbol, False),
@@ -262,6 +299,42 @@ class StrategyRuntime:
                 await self._submit_entry(context, signal)
             elif signal.action in {SignalAction.SELL, SignalAction.EXIT}:
                 await self._submit_signal_exit(context, signal)
+
+    async def refresh_signal_snapshots(self) -> None:
+        now = datetime.now(KST)
+        if (
+            self.last_snapshot_refresh_at is not None
+            and (now - self.last_snapshot_refresh_at).total_seconds() < 30
+            and self.latest_signals
+        ):
+            return
+        for symbol in self.symbols:
+            bars = await self.market.get_minute_bars(symbol, max_pages=4)
+            if bars:
+                self.series[symbol].bars = {bar.time: bar for bar in bars}
+            if symbol not in self.daily_bars:
+                self.daily_bars[symbol] = self._to_price_bars(await self.market.get_period_bars(symbol, "day"))
+            series = self.series[symbol]
+            market = series.snapshot(symbol, now)
+            if market is None:
+                continue
+            if not self.market_indices:
+                await self._refresh_market_indices()
+            context = SignalContext(
+                market=market,
+                orderbook=self.orderbooks.get(symbol),
+                trade_strength=self.trade_strengths.get(symbol),
+                recent_prices=series.recent_prices(),
+                intraday_bars=series.price_bars(),
+                daily_bars=self.daily_bars.get(symbol, ()),
+                market_indices=self.market_indices,
+                already_held=self.engine.context.position_quantities.get(symbol, 0) > 0,
+                has_pending_order=symbol in self.engine.context.pending_symbols,
+                trading_halted=self.trading_halts.get(symbol, False),
+                vi_active=False,
+            )
+            self.latest_signals[symbol] = self.scorer.evaluate(context)
+        self.last_snapshot_refresh_at = now
 
     async def _record_action_change(self, signal: ScoredSignal) -> None:
         if self._last_actions.get(signal.symbol) == signal.action:
@@ -396,6 +469,73 @@ class StrategyRuntime:
             self.volatility_blocked_until[tick.symbol] = now + timedelta(
                 seconds=self.settings.volatility_guard_cooldown_seconds
             )
+
+    def _to_price_bars(self, bars: list[MinuteBar]) -> tuple[PriceBar, ...]:
+        return tuple(
+            PriceBar(
+                time=bar.time,
+                open=bar.open if bar.open > 0 else bar.price,
+                high=bar.high,
+                low=bar.low,
+                close=bar.price,
+                volume=bar.volume,
+            )
+            for bar in bars
+        )
+
+    async def _refresh_market_indices(self) -> None:
+        labels = {"069500": "KOSPI200 proxy", "229200": "KOSDAQ150 proxy"}
+        snapshots: list[MarketIndexSnapshot] = []
+        for symbol in self.settings.market_proxy_symbol_list:
+            try:
+                bars = self._to_price_bars(await self.market.get_period_bars(symbol, "day"))
+                quote = await self.market.get_current_price(symbol)
+            except Exception as error:
+                snapshots.append(
+                    MarketIndexSnapshot(
+                        name=labels.get(symbol, symbol),
+                        symbol=symbol,
+                        price=Decimal("0"),
+                        change_pct=Decimal("0"),
+                        score=Decimal("0"),
+                        ready=False,
+                        reason=str(error),
+                    )
+                )
+                continue
+            closes = tuple(bar.close for bar in bars if bar.close > 0)
+            if len(closes) < 21:
+                snapshots.append(
+                    MarketIndexSnapshot(
+                        name=labels.get(symbol, symbol),
+                        symbol=symbol,
+                        price=quote.price,
+                        change_pct=Decimal("0"),
+                        score=Decimal("0"),
+                        ready=False,
+                        reason="Market proxy history unavailable",
+                    )
+                )
+                continue
+            price = quote.price if quote.price > 0 else closes[-1]
+            ma5 = sum(closes[-5:]) / Decimal("5")
+            ma20 = sum(closes[-20:]) / Decimal("20")
+            change_pct = (price - closes[-2]) / closes[-2] * Decimal("100") if closes[-2] > 0 else Decimal("0")
+            score = Decimal("35") if price > ma5 else Decimal("-35")
+            score += Decimal("35") if ma5 > ma20 else Decimal("-35")
+            score += max(Decimal("-30"), min(Decimal("30"), change_pct * Decimal("12")))
+            snapshots.append(
+                MarketIndexSnapshot(
+                    name=labels.get(symbol, symbol),
+                    symbol=symbol,
+                    price=price,
+                    change_pct=change_pct,
+                    score=max(Decimal("-100"), min(Decimal("100"), score)),
+                    ready=True,
+                    reason=f"{change_pct:.2f}% vs prior close",
+                )
+            )
+        self.market_indices = tuple(snapshots)
 
     async def _refresh_vi(self, symbol: str) -> None:
         try:

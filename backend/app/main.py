@@ -14,7 +14,7 @@ from app.db.session import AsyncSessionFactory, get_session, init_db
 from app.kis.account import KISAccountService
 from app.kis.auth import KISAuthService
 from app.kis.client import KISAPIError, KISClient, KISConfigurationError
-from app.kis.market import KISMarketService
+from app.kis.market import KISMarketService, MinuteBar
 from app.kis.order import KISOrderService
 from app.kis.websocket import KISWebSocketClient
 from app.notifications.telegram import TelegramNotifier
@@ -351,19 +351,45 @@ async def market_quote(symbol: str, request: Request) -> MarketQuote:
     )
 
 
+def aggregate_minute_bars(bars: list[MinuteBar], minutes: int) -> list[MinuteBar]:
+    grouped: dict[str, list[MinuteBar]] = {}
+    for bar in bars:
+        if len(bar.time) < 4:
+            continue
+        hour = int(bar.time[:2])
+        minute = int(bar.time[2:4])
+        bucket = f"{hour:02d}{(minute // minutes) * minutes:02d}00"
+        grouped.setdefault(bucket, []).append(bar)
+    result: list[MinuteBar] = []
+    for bucket in sorted(grouped):
+        items = sorted(grouped[bucket], key=lambda item: item.time)
+        result.append(
+            MinuteBar(
+                symbol=items[-1].symbol,
+                time=bucket,
+                price=items[-1].price,
+                high=max(item.high for item in items),
+                low=min(item.low for item in items),
+                volume=sum(item.volume for item in items),
+                open=items[0].open if items[0].open > 0 else items[0].price,
+            )
+        )
+    return result
+
+
 @app.get("/api/market/{symbol}/bars", response_model=list[MarketBar])
-async def market_bars(symbol: str, request: Request, period: str = "1m") -> list[MarketBar]:
+async def market_bars(symbol: str, request: Request, period: str = "10m") -> list[MarketBar]:
     if not symbol.isdigit() or len(symbol) != 6:
         raise HTTPException(status_code=422, detail="Symbol must be a 6-digit stock code")
-    if period not in {"1m", "day", "week", "month"}:
+    if period not in {"10m", "day", "week", "month"}:
         raise HTTPException(status_code=422, detail="Unsupported chart period")
     service = market_service_from(request)
     if service is None:
         raise HTTPException(status_code=503, detail="KIS market service is not configured")
     try:
         bars = (
-            await service.get_minute_bars(symbol, max_pages=1)
-            if period == "1m"
+            aggregate_minute_bars(await service.get_minute_bars(symbol, max_pages=4), 10)
+            if period == "10m"
             else await service.get_period_bars(symbol, period)
         )
     except (KISAPIError, KISConfigurationError) as error:
@@ -487,6 +513,11 @@ async def automation(payload: AutomationRequest, request: Request, session: Sess
 async def strategy_status(request: Request) -> StrategyStatus:
     engine = engine_from(request)
     runtime = request.app.state.strategy_runtime
+    if runtime is not None and not runtime.signal_payloads():
+        try:
+            await asyncio.wait_for(runtime.refresh_signal_snapshots(), timeout=12)
+        except Exception:
+            pass
     return StrategyStatus(
         name="SIGNAL_SCORER",
         enabled=engine.automation_enabled,

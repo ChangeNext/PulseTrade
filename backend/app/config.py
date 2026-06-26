@@ -55,6 +55,16 @@ class Settings(BaseSettings):
     signal_weight_trade_strength: float = 15.0
     signal_weight_momentum: float = 10.0
     signal_weight_trend: float = 10.0
+    signal_weight_price_location: float = 12.0
+    signal_weight_trend_structure: float = 12.0
+    signal_weight_breakout: float = 14.0
+    signal_weight_pullback: float = 8.0
+    signal_weight_moving_average: float = 10.0
+    signal_weight_candle: float = 6.0
+    signal_weight_momentum_indicators: float = 8.0
+    signal_weight_risk_reward: float = 10.0
+    signal_weight_market_regime: float = 8.0
+    market_proxy_symbols: str = "069500,229200"
     order_reconcile_interval_seconds: float = 3.0
     sim_initial_cash_krw: int = 10_000_000
     sim_commission_bps: float = 1.5
@@ -81,6 +91,14 @@ class Settings(BaseSettings):
         return [
             symbol.strip()
             for symbol in self.strategy_symbols.split(",")
+            if symbol.strip().isdigit() and len(symbol.strip()) == 6
+        ]
+
+    @property
+    def market_proxy_symbol_list(self) -> list[str]:
+        return [
+            symbol.strip()
+            for symbol in self.market_proxy_symbols.split(",")
             if symbol.strip().isdigit() and len(symbol.strip()) == 6
         ]
 

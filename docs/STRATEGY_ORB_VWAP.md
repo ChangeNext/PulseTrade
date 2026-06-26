@@ -1,37 +1,34 @@
-# ORB + VWAP + Volume Strategy
+# PulseTrade Short-Term Score
 
-The live strategy score is a weighted composite of market-data components. Each
-component returns a normalized score from -100 to 100. `SignalScorer` combines
-ready components by configured weights, then applies the risk filter before any
-entry signal can become an order.
+The strategy score is a -100 to 100 weighted composite. It is tuned for short
+term trading over intraday to one or two trading days, not for long-term
+investment selection.
 
-Default component weights:
+Current scoring components:
 
-- Opening range breakout: 25
-- 1-minute relative volume: 20
-- VWAP distance: 15
-- Order book imbalance: 15
-- Realtime trade strength: 15
-- 5-minute momentum: 10
-- Trend alignment: 10
+- Volume spike: current 1-minute volume compared with recent average volume.
+- Price location: distance from nearby support and resistance.
+- Trend structure: whether recent highs and lows are rising or falling.
+- Breakout confirmation: close above recent high with volume confirmation.
+- Pullback quality: lighter volume on pullback and renewed volume on rebound.
+- Moving average alignment: 5/20/60 average alignment and slope.
+- VWAP: current price position versus intraday VWAP.
+- Candle quality: body strength, upper wick pressure, and lower wick support.
+- Momentum indicators: RSI direction and MACD histogram direction.
+- Risk/reward: distance to support as risk versus resistance as reward.
+- Market regime: KOSPI/KOSDAQ proxy trend using `069500` and `229200`.
 
-Default decision thresholds:
+Order book and trade strength remain part of realtime readiness and risk checks,
+but they are no longer the main score drivers. LIVE automation is still blocked;
+LIVE mode runs this as signal-only unless a separate live automation release is
+made.
 
-- `BUY`: composite score >= 70 and risk filter passes
-- `SELL`: held position score <= -60
-- `EXIT`: held position score <= -80
-- `WAIT`: every other state, including missing required data
+Decision thresholds:
 
-The trend-alignment component uses recent 1-minute closes to compare the 5-bar
-average with the 20-bar average, measure the 20-bar average slope, and penalize
-very extended moves above the 20-bar average. This is intended to reward cleaner
-chart structure without treating a single price jump as a full signal.
+- `BUY`: score >= 70 and risk filter passes.
+- `SELL`: held position score <= -60.
+- `EXIT`: held position score <= -80.
+- `WAIT`: every other state.
 
-Risk gates still run after scoring. The strategy will not enter when a position
-is already held, an order is pending, order book/trade-strength data is missing,
-the stock is halted, VI is active, the spread is too wide, or the order book is
-stale. The generated signal is not an order by itself; `ExecutionEngine` and
-`RiskManager` remain the final safety layer.
-
-This score is a trading heuristic, not a profitability guarantee. Backtesting
-and paper/live observation should be used before changing thresholds or weights.
+This is a rule-based scoring model, not a guarantee. Scores should be reviewed
+against actual charts before thresholds are used for automated execution.

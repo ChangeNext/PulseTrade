@@ -19,6 +19,27 @@ class MarketSnapshot:
 
 
 @dataclass(frozen=True)
+class PriceBar:
+    time: str
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: int
+
+
+@dataclass(frozen=True)
+class MarketIndexSnapshot:
+    name: str
+    symbol: str
+    price: Decimal
+    change_pct: Decimal
+    score: Decimal
+    ready: bool
+    reason: str
+
+
+@dataclass(frozen=True)
 class StrategySignal:
     strategy: str
     symbol: str
@@ -50,6 +71,9 @@ class SignalContext:
     orderbook: OrderBookSnapshot | None
     trade_strength: Decimal | None
     recent_prices: tuple[Decimal, ...]
+    intraday_bars: tuple[PriceBar, ...] = ()
+    daily_bars: tuple[PriceBar, ...] = ()
+    market_indices: tuple[MarketIndexSnapshot, ...] = ()
     already_held: bool = False
     has_pending_order: bool = False
     trading_halted: bool = False

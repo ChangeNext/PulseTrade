@@ -36,6 +36,7 @@ class MinuteBar:
     high: Decimal
     low: Decimal
     volume: int
+    open: Decimal = Decimal("0")
 
 
 class KISMarketService:
@@ -163,6 +164,7 @@ class KISMarketService:
                     high=Decimal(str(row.get("stck_hgpr") or "0")),
                     low=Decimal(str(row.get("stck_lwpr") or "0")),
                     volume=int(row.get("cntg_vol") or 0),
+                    open=Decimal(str(row.get("stck_oprc") or row.get("stck_prpr") or "0")),
                 )
             if not times or min(times) <= "090000":
                 break
@@ -209,6 +211,7 @@ class KISMarketService:
                 high=Decimal(str(row.get("stck_hgpr") or "0")),
                 low=Decimal(str(row.get("stck_lwpr") or "0")),
                 volume=int(row.get("acml_vol") or 0),
+                open=Decimal(str(row.get("stck_oprc") or row.get("stck_clpr") or "0")),
             )
             for row in rows
             if row.get("stck_bsop_date")

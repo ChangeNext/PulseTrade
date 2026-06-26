@@ -13,4 +13,4 @@ export interface MarketBar {
   volume: number;
 }
 
-export type ChartPeriod = "1m" | "day" | "week" | "month";
+export type ChartPeriod = "10m" | "day" | "week" | "month";
