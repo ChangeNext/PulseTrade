@@ -1,7 +1,7 @@
 import type { AccountSummaryData, Position } from "../types/account";
-import type { ChartPeriod, MarketBar, MarketQuote } from "../types/market";
+import type { ChartPeriod, MarketBar, MarketQuote, StockSearchResult } from "../types/market";
 import type { ManualOrderInput, Order } from "../types/order";
-import type { HealthStatus, StrategyStatusData } from "../types/strategy";
+import type { HealthStatus, StrategySignalData, StrategyStatusData } from "../types/strategy";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api";
 
@@ -52,13 +52,17 @@ export const api = {
     const bars = await request<MarketBar[]>(`/market/${symbol}/bars?period=${period}`);
     return bars.map((bar) => ({
       ...bar,
+      open: Number(bar.open),
       price: Number(bar.price),
       high: Number(bar.high),
       low: Number(bar.low),
       volume: Number(bar.volume),
     }));
   },
+  stockSearch: (query: string) =>
+    request<StockSearchResult[]>(`/stocks/search?q=${encodeURIComponent(query)}&limit=12`),
   strategy: () => request<StrategyStatusData>("/strategy"),
+  strategyScore: (symbol: string) => request<StrategySignalData>(`/strategy/${symbol}/score`),
   submitOrder: (order: ManualOrderInput) =>
     request<{ order_id: string; state: string; message: string }>("/orders/manual", {
       method: "POST",

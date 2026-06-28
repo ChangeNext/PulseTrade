@@ -2,6 +2,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -19,9 +20,10 @@ from app.kis.order import KISOrderService
 from app.kis.websocket import KISWebSocketClient
 from app.notifications.telegram import TelegramNotifier
 from app.schemas.account import AccountSummary, Position
-from app.schemas.market import MarketBar, MarketQuote
+from app.schemas.market import MarketBar, MarketQuote, StockSearchResult
 from app.schemas.order import CancelOrderResponse, KillSwitchRequest, ManualOrderRequest, OrderResponse
-from app.schemas.strategy import AutomationRequest, StrategyStatus
+from app.schemas.strategy import AutomationRequest, SignalScore, StrategyStatus
+from app.stock_listing import StockListingRepository
 from app.strategies.runtime import StrategyRuntime
 from app.trading.execution_engine import ExecutionEngine, IdempotencyConflict
 from app.trading.order_manager import OrderManager
@@ -32,6 +34,7 @@ from app.utils.logger import configure_logging
 
 settings = get_settings()
 KST = timezone(timedelta(hours=9))
+stock_listing = StockListingRepository(Path(__file__).resolve().parents[1] / "상장법인목록.xls")
 
 
 def market_is_open() -> bool:
@@ -61,6 +64,8 @@ async def reconciliation_loop(app: FastAPI) -> None:
 async def lifespan(app: FastAPI):
     configure_logging()
     await init_db()
+    async with AsyncSessionFactory() as session:
+        await TradingRepository(session).sync_listed_stocks(stock_listing.all())
     notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
     risk_manager = RiskManager(
         max_order_amount=Decimal(settings.max_order_amount_krw),
@@ -216,6 +221,17 @@ async def health(request: Request) -> dict:
     engine = engine_from(request)
     strategy = request.app.state.strategy_runtime
     reconciliation = request.app.state.reconciliation
+    websocket_state = "NOT_CONFIGURED"
+    if strategy is not None:
+        if engine.context.websocket_connected:
+            websocket_state = "CONNECTED"
+        elif strategy.last_error in {
+            "Waiting for intraday bars and realtime order books",
+            "Waiting for realtime order books/trade strength",
+        }:
+            websocket_state = "CONNECTING"
+        else:
+            websocket_state = "DISCONNECTED"
     return {
         "status": "ok",
         "mode": settings.trading_mode,
@@ -235,6 +251,7 @@ async def health(request: Request) -> dict:
         ),
         "api_connected": engine.context.api_connected,
         "websocket_connected": engine.context.websocket_connected,
+        "websocket_state": websocket_state,
         "account_synced": engine.context.account_synchronized,
         "orders_synced": engine.context.orders_synchronized,
         "pnl_synced": engine.context.pnl_synchronized,
@@ -397,12 +414,29 @@ async def market_bars(symbol: str, request: Request, period: str = "10m") -> lis
     return [
         MarketBar(
             time=bar.time,
+            open=bar.open if bar.open > 0 else bar.price,
             price=bar.price,
             high=bar.high,
             low=bar.low,
             volume=bar.volume,
         )
         for bar in bars
+    ]
+
+
+@app.get("/api/stocks/search", response_model=list[StockSearchResult])
+async def search_stocks(q: str, session: SessionDep, limit: int = 20) -> list[StockSearchResult]:
+    if limit < 1 or limit > 50:
+        raise HTTPException(status_code=422, detail="Limit must be between 1 and 50")
+    return [
+        StockSearchResult(
+            symbol=stock.symbol,
+            name=stock.name,
+            market=stock.market,
+            sector=stock.sector,
+            product=stock.product,
+        )
+        for stock in await TradingRepository(session).search_listed_stocks(q, limit)
     ]
 
 
@@ -530,3 +564,21 @@ async def strategy_status(request: Request) -> StrategyStatus:
         watched_symbols=runtime.symbols if runtime else settings.strategy_symbol_list,
         signals=runtime.signal_payloads() if runtime else [],
     )
+
+
+@app.get("/api/strategy/{symbol}/score", response_model=SignalScore)
+async def strategy_symbol_score(symbol: str, request: Request) -> dict:
+    if not symbol.isdigit() or len(symbol) != 6:
+        raise HTTPException(status_code=422, detail="Symbol must be a 6-digit stock code")
+    runtime = request.app.state.strategy_runtime
+    if runtime is None:
+        raise HTTPException(status_code=503, detail="Strategy runtime is not configured")
+    try:
+        signal = await asyncio.wait_for(runtime.score_symbol_snapshot(symbol), timeout=25)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except (KISAPIError, KISConfigurationError) as error:
+        raise_kis_http_error(error)
+    except asyncio.TimeoutError as error:
+        raise HTTPException(status_code=504, detail="Strategy score calculation timed out") from error
+    return runtime.signal_payload(signal)

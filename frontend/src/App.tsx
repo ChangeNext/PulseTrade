@@ -22,6 +22,7 @@ export default function App() {
   const [strategy, setStrategy] = useState<StrategyStatusData | null>(null);
   const [quote, setQuote] = useState<MarketQuote | null>(null);
   const [bars, setBars] = useState<MarketBar[]>([]);
+  const [selectedSymbol, setSelectedSymbol] = useState("005930");
   const [chartPeriod, setChartPeriod] = useState<ChartPeriod>("10m");
   const [marketError, setMarketError] = useState("");
   const [error, setError] = useState("");
@@ -40,7 +41,8 @@ export default function App() {
       const [nextHealth, nextAccount, nextPositions, nextOrders, nextStrategy] = await Promise.all([
         api.health(), api.account(), api.positions(), api.orders(), api.strategy(),
       ]);
-      const symbol = nextStrategy.watched_symbols?.[0] ?? "005930";
+      const symbol = selectedSymbol || nextStrategy.watched_symbols?.[0] || "005930";
+      const websocketState = nextHealth.websocket_state ?? (nextHealth.websocket_connected ? "CONNECTED" : "DISCONNECTED");
       try {
         const nextQuote = await api.marketQuote(symbol);
         setQuote(nextQuote);
@@ -52,11 +54,23 @@ export default function App() {
       const previous = previousHealth.current;
       if (!previous) {
         appendLog("API", "INFO", "REST API 연결이 확인되었습니다.");
-        appendLog("WEBSOCKET", nextHealth.websocket_connected ? "INFO" : "ERROR", nextHealth.websocket_connected ? "실시간 시세 연결이 확인되었습니다." : "실시간 시세 연결이 끊겨 있습니다.");
+        appendLog(
+          "WEBSOCKET",
+          websocketState === "CONNECTED" ? "INFO" : websocketState === "CONNECTING" ? "INFO" : websocketState === "NOT_CONFIGURED" ? "WARN" : "ERROR",
+          websocketState === "CONNECTED"
+            ? "실시간 시세 연결이 확인되었습니다."
+            : websocketState === "CONNECTING"
+              ? "실시간 시세 연결을 시도 중입니다."
+              : websocketState === "NOT_CONFIGURED"
+                ? "실시간 시세 연결이 설정되지 않았습니다."
+                : "실시간 시세 연결이 끊겨 있습니다.",
+        );
         appendLog("TELEGRAM", nextHealth.telegram_configured ? "INFO" : "WARN", nextHealth.telegram_configured ? "Telegram 알림이 설정되어 있습니다." : "Telegram 알림이 설정되지 않았습니다.");
       }
-      if (previous?.websocket_connected && !nextHealth.websocket_connected) appendLog("WEBSOCKET", "ERROR", "실시간 시세 연결이 끊겼습니다. 자동매매를 중지해야 합니다.");
-      if (previous && !previous.websocket_connected && nextHealth.websocket_connected) appendLog("WEBSOCKET", "INFO", "실시간 시세 연결이 복구되었습니다.");
+      const previousWebsocketState = previous?.websocket_state ?? (previous?.websocket_connected ? "CONNECTED" : "DISCONNECTED");
+      if (previousWebsocketState === "CONNECTED" && websocketState === "DISCONNECTED") appendLog("WEBSOCKET", "ERROR", "실시간 시세 연결이 끊겼습니다. 자동매매를 중지해야 합니다.");
+      if (previousWebsocketState !== "CONNECTED" && websocketState === "CONNECTED") appendLog("WEBSOCKET", "INFO", "실시간 시세 연결이 복구되었습니다.");
+      if (previousWebsocketState !== "CONNECTING" && websocketState === "CONNECTING") appendLog("WEBSOCKET", "INFO", "실시간 시세 연결을 시도 중입니다.");
       if (previous?.emergency_stopped !== nextHealth.emergency_stopped) appendLog("RISK", nextHealth.emergency_stopped ? "BLOCK" : "INFO", nextHealth.emergency_stopped ? "긴급 STOP이 활성화되었습니다." : "긴급 STOP이 해제되었습니다.");
       previousHealth.current = nextHealth;
       setHealth(nextHealth); setAccount(nextAccount); setPositions(nextPositions); setOrders(nextOrders); setStrategy(nextStrategy); setError("");
@@ -64,7 +78,7 @@ export default function App() {
       const message = caught instanceof Error ? caught.message : "백엔드 연결에 실패했습니다.";
       setError(message); appendLog("API", "ERROR", message);
     }
-  }, [appendLog, chartPeriod]);
+  }, [appendLog, chartPeriod, selectedSymbol]);
 
   useEffect(() => {
     appendLog("SYSTEM", "INFO", "PulseTrade 대시보드가 시작되었습니다.");
@@ -115,7 +129,16 @@ export default function App() {
 
       <main className="dashboard">
         <AccountSummary data={account} positions={positions} orders={orders} />
-        <MarketChartPanel quote={quote} bars={bars} strategy={strategy} error={marketError} period={chartPeriod} onPeriodChange={setChartPeriod} />
+        <MarketChartPanel
+          quote={quote}
+          bars={bars}
+          strategy={strategy}
+          error={marketError}
+          period={chartPeriod}
+          selectedSymbol={selectedSymbol}
+          onPeriodChange={setChartPeriod}
+          onSymbolChange={setSelectedSymbol}
+        />
         <div className="control-grid">
           <ManualOrderPanel mode={mode} liveEnabled={liveEnabled} emergencyStopped={stopped} onSubmitted={refresh} onSystemMessage={(message, isError) => appendLog(isError ? "RISK" : "ORDER", isError ? "BLOCK" : "INFO", message)} />
           <StrategyPanel strategy={strategy} emergencyStopped={stopped} onAutoOrderToggle={toggleAutomation} />

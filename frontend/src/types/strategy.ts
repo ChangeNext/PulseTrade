@@ -1,3 +1,11 @@
+export interface StrategySignalData {
+  symbol: string;
+  action: "BUY" | "WAIT" | "SELL" | "EXIT";
+  score: number;
+  reason: string;
+  components: Array<{ name: string; score: number; ready: boolean; reason: string }>;
+}
+
 export interface StrategyStatusData {
   name: string;
   enabled: boolean;
@@ -11,13 +19,7 @@ export interface StrategyStatusData {
   ready?: boolean;
   readiness_reason?: string | null;
   watched_symbols?: string[];
-  signals?: Array<{
-    symbol: string;
-    action: "BUY" | "WAIT" | "SELL" | "EXIT";
-    score: number;
-    reason: string;
-    components: Array<{ name: string; score: number; ready: boolean; reason: string }>;
-  }>;
+  signals?: StrategySignalData[];
 }
 
 export interface HealthStatus {
@@ -29,6 +31,7 @@ export interface HealthStatus {
   rest_connected?: boolean;
   api_connected: boolean;
   websocket_connected: boolean;
+  websocket_state?: "NOT_CONFIGURED" | "CONNECTING" | "CONNECTED" | "DISCONNECTED";
   telegram_configured?: boolean;
   telegram_connected?: boolean;
   emergency_stopped: boolean;

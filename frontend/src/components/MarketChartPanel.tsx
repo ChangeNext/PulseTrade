@@ -1,5 +1,7 @@
-import type { ChartPeriod, MarketBar, MarketQuote } from "../types/market";
-import type { StrategyStatusData } from "../types/strategy";
+import { useEffect, useState } from "react";
+import { api } from "../api/client";
+import type { ChartPeriod, MarketBar, MarketQuote, StockSearchResult } from "../types/market";
+import type { StrategySignalData, StrategyStatusData } from "../types/strategy";
 
 const number = new Intl.NumberFormat("ko-KR");
 const PERIODS: Array<{ value: ChartPeriod; label: string; title: string }> = [
@@ -8,10 +10,6 @@ const PERIODS: Array<{ value: ChartPeriod; label: string; title: string }> = [
   { value: "week", label: "주봉", title: "주봉" },
   { value: "month", label: "월봉", title: "월봉" },
 ];
-
-function pathFromPoints(points: Array<[number, number]>) {
-  return points.map(([x, y], index) => `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`).join(" ");
-}
 
 function nearestLevels(bars: MarketBar[]) {
   const current = bars.at(-1)?.price ?? 0;
@@ -28,26 +26,172 @@ function axisTicks(min: number, max: number) {
   return [0, 0.25, 0.5, 0.75, 1].map((ratio) => max - (max - min) * ratio);
 }
 
-function pivotTrendLines(bars: MarketBar[], points: Array<[number, number]>) {
-  const lows: Array<{ index: number; value: number }> = [];
-  const highs: Array<{ index: number; value: number }> = [];
+type PivotPoint = {
+  index: number;
+  x: number;
+  value: number;
+};
+
+type TrendLine = {
+  start: [number, number];
+  end: [number, number];
+  price: number;
+  label: [number, number];
+  slope: number;
+  touchCount: number;
+  role: "support" | "resistance";
+};
+
+type TrendConfig = {
+  lookback: number;
+  candidateLookback: number;
+  pivotRadius: number;
+  toleranceRatio: number;
+  minTouches: number;
+  maxProjectionDriftRatio: number;
+};
+
+function trendConfig(period: ChartPeriod): TrendConfig {
+  if (period === "week") return { lookback: 180, candidateLookback: 70, pivotRadius: 2, toleranceRatio: 0.015, minTouches: 2, maxProjectionDriftRatio: 0.45 };
+  if (period === "month") return { lookback: 120, candidateLookback: 48, pivotRadius: 2, toleranceRatio: 0.02, minTouches: 2, maxProjectionDriftRatio: 0.5 };
+  if (period === "day") return { lookback: 90, candidateLookback: 42, pivotRadius: 2, toleranceRatio: 0.012, minTouches: 2, maxProjectionDriftRatio: 0.38 };
+  return { lookback: 90, candidateLookback: 42, pivotRadius: 2, toleranceRatio: 0.012, minTouches: 2, maxProjectionDriftRatio: 0.38 };
+}
+
+function pivotTrendLines(
+  bars: MarketBar[],
+  points: Array<[number, number]>,
+  toY: (price: number) => number,
+  xMax: number,
+  config: TrendConfig,
+) {
+  const lows: PivotPoint[] = [];
+  const highs: PivotPoint[] = [];
   bars.forEach((bar, index) => {
-    if (index < 2 || index > bars.length - 3) return;
-    const neighbors = bars.slice(index - 2, index + 3);
-    if (bar.low === Math.min(...neighbors.map((item) => item.low))) lows.push({ index, value: bar.low });
-    if (bar.high === Math.max(...neighbors.map((item) => item.high))) highs.push({ index, value: bar.high });
+    if (index < config.pivotRadius || index > bars.length - config.pivotRadius - 1) return;
+    const neighbors = bars.slice(index - config.pivotRadius, index + config.pivotRadius + 1);
+    if (bar.low === Math.min(...neighbors.map((item) => item.low))) lows.push({ index, x: points[index]?.[0] ?? 0, value: bar.low });
+    if (bar.high === Math.max(...neighbors.map((item) => item.high))) highs.push({ index, x: points[index]?.[0] ?? 0, value: bar.high });
   });
-  const risingPair = lows
-    .flatMap((first, firstIndex) => lows.slice(firstIndex + 1).map((second) => [first, second] as const))
-    .filter(([first, second]) => second.value > first.value)
-    .at(-1);
-  const fallingPair = highs
-    .flatMap((first, firstIndex) => highs.slice(firstIndex + 1).map((second) => [first, second] as const))
-    .filter(([first, second]) => second.value < first.value)
-    .at(-1);
+
+  const tolerance = Math.max((Math.max(...bars.map((item) => item.high)) - Math.min(...bars.map((item) => item.low))) * config.toleranceRatio, 1);
+  const latestIndex = bars.length - 1;
+  const candidateStart = Math.max(0, bars.length - config.candidateLookback);
+  const priceSpan = Math.max(...bars.map((item) => item.high)) - Math.min(...bars.map((item) => item.low));
+  const latestClose = bars.at(-1)?.price ?? 0;
+
+  function projectedValue(first: PivotPoint, slope: number, x: number) {
+    return first.value + slope * (x - first.x);
+  }
+
+  function lineTouches(pivots: PivotPoint[], first: PivotPoint, slope: number) {
+    return pivots.filter((pivot) => Math.abs(pivot.value - projectedValue(first, slope, pivot.x)) <= tolerance);
+  }
+
+  function spacingScore(touches: PivotPoint[]) {
+    if (touches.length < 3) return 0;
+    const gaps = touches.slice(1).map((pivot, index) => pivot.index - touches[index].index);
+    const averageGap = gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length;
+    const variance = gaps.reduce((sum, gap) => sum + Math.abs(gap - averageGap), 0) / gaps.length;
+    return Math.max(0, 1 - variance / Math.max(averageGap, 1));
+  }
+
+  function chooseBoundaryLine(pivots: PivotPoint[], role: "support" | "resistance"): TrendLine | null {
+    let best: { line: TrendLine; score: number } | null = null;
+    const candidates = pivots.filter((pivot) => pivot.index >= candidateStart);
+    for (let i = 0; i < candidates.length - 1; i += 1) {
+      for (let j = i + 1; j < candidates.length; j += 1) {
+        const first = candidates[i];
+        const second = candidates[j];
+        if (second.x <= first.x) continue;
+        if (second.index < latestIndex - Math.floor(config.candidateLookback * 0.45)) continue;
+        const slope = (second.value - first.value) / (second.x - first.x);
+        if (!Number.isFinite(slope)) continue;
+        const touchedPivots = lineTouches(candidates, first, slope);
+        if (touchedPivots.length < config.minTouches) continue;
+        const latestTouch = touchedPivots.reduce((current, pivot) => (pivot.x > current.x ? pivot : current));
+        if (latestTouch.index < latestIndex - Math.floor(config.candidateLookback * 0.35)) continue;
+        const projectedEndValue = projectedValue(first, slope, xMax);
+        if (
+          latestClose > 0
+          && priceSpan > 0
+          && Math.abs(projectedEndValue - latestClose) > priceSpan * config.maxProjectionDriftRatio
+        ) {
+          continue;
+        }
+        const recentBars = bars.slice(Math.max(first.index, candidateStart));
+        const breaks = recentBars.filter((bar, offset) => {
+          const index = Math.max(first.index, candidateStart) + offset;
+          const expected = projectedValue(first, slope, points[index]?.[0] ?? first.x);
+          return role === "support" ? bar.price < expected - tolerance : bar.price > expected + tolerance;
+        }).length;
+        if (breaks > Math.max(1, Math.floor(recentBars.length * 0.12))) continue;
+        const line: TrendLine = {
+          start: [first.x, toY(first.value)],
+          end: [xMax, toY(projectedEndValue)],
+          price: latestTouch.value,
+          label: [latestTouch.x, toY(latestTouch.value) + (role === "support" ? -10 : 14)],
+          slope,
+          touchCount: touchedPivots.length,
+          role,
+        };
+        const latestBonus = latestTouch.index * 100;
+        const currentFitPenalty = priceSpan > 0 ? Math.abs(projectedEndValue - latestClose) / priceSpan * 500 : 0;
+        const validationBonus = touchedPivots.length >= 3 ? 1600 : 0;
+        const distributionBonus = spacingScore(touchedPivots) * 700;
+        const breakPenalty = breaks * 900;
+        const score = touchedPivots.length * 1000 + validationBonus + distributionBonus + latestBonus + (second.index - first.index) * 5 - currentFitPenalty - breakPenalty;
+        if (!best || score > best.score) best = { line, score };
+      }
+    }
+    return best?.line ?? null;
+  }
+
+  function parallelLowerChannel(upperLine: TrendLine | null): TrendLine | null {
+    if (!upperLine || lows.length < 2) return null;
+    let best: { pivot: PivotPoint; touches: number; score: number } | null = null;
+    const recentLows = lows.filter((pivot) => pivot.index >= candidateStart);
+    for (const pivot of recentLows) {
+      const touches = recentLows.filter((item) => {
+        const expected = pivot.value + upperLine.slope * (item.x - pivot.x);
+        return Math.abs(item.value - expected) <= tolerance;
+      }).length;
+      if (touches < Math.max(2, config.minTouches - 1)) continue;
+      const score = touches * 1000 + pivot.index;
+      if (!best || score > best.score) best = { pivot, touches, score };
+    }
+    if (!best) return null;
+    const projectedEndValue = best.pivot.value + upperLine.slope * (xMax - best.pivot.x);
+    if (
+      latestClose > 0
+      && priceSpan > 0
+      && Math.abs(projectedEndValue - latestClose) > priceSpan * config.maxProjectionDriftRatio
+    ) {
+      return null;
+    }
+    const touchedLows = recentLows.filter((item) => {
+      const expected = best.pivot.value + upperLine.slope * (item.x - best.pivot.x);
+      return Math.abs(item.value - expected) <= tolerance;
+    });
+    const latestTouch = touchedLows.reduce((current, pivot) => (pivot.x > current.x ? pivot : current), touchedLows[0]);
+    return {
+      start: [best.pivot.x, toY(best.pivot.value)],
+      end: [xMax, toY(projectedEndValue)],
+      price: latestTouch.value,
+      label: [latestTouch.x, toY(latestTouch.value) - 10],
+      slope: upperLine.slope,
+      touchCount: touchedLows.length,
+      role: "support",
+    };
+  }
+
+  const support = chooseBoundaryLine(lows, "support");
+  const resistance = chooseBoundaryLine(highs, "resistance");
+
   return {
-    rising: risingPair ? { start: points[risingPair[0].index], end: points[risingPair[1].index] } : null,
-    falling: fallingPair ? { start: points[fallingPair[0].index], end: points[fallingPair[1].index] } : null,
+    support,
+    resistance,
+    lowerChannel: parallelLowerChannel(resistance),
   };
 }
 
@@ -72,37 +216,40 @@ function timeTicks(bars: MarketBar[], points: Array<[number, number]>, period: C
   return result.slice(period === "10m" ? -5 : -6);
 }
 
-function LineChart({ bars, period }: { bars: MarketBar[]; period: ChartPeriod }) {
+function CandleChart({ bars, period }: { bars: MarketBar[]; period: ChartPeriod }) {
   const width = 980;
-  const height = 360;
+  const height = 420;
   const paddingTop = 18;
   const paddingLeft = 22;
   const paddingRight = 82;
-  const paddingBottom = 34;
-  const volumeHeight = 72;
-  const priceBottom = height - paddingBottom - volumeHeight - 10;
+  const paddingBottom = 44;
+  const volumeHeight = 88;
+  const priceBottom = height - paddingBottom - volumeHeight - 12;
   const volumeTop = height - paddingBottom - volumeHeight;
   const volumeBase = height - paddingBottom;
   const usableWidth = width - paddingLeft - paddingRight;
   const usableHeight = priceBottom - paddingTop;
-  const sliced = bars.slice(-90);
-  const prices = sliced.flatMap((bar) => [bar.high, bar.low, bar.price]).filter((value) => value > 0);
+  const config = trendConfig(period);
+  const sliced = bars.slice(-config.lookback);
+  const prices = sliced.flatMap((bar) => [bar.open, bar.high, bar.low, bar.price]).filter((value) => value > 0);
   const min = Math.min(...prices);
   const max = Math.max(...prices);
   const span = Math.max(max - min, 1);
-  const points = sliced.map((bar, index) => {
+  const candles = sliced.map((bar, index) => {
     const x = paddingLeft + (sliced.length <= 1 ? 0 : (index / (sliced.length - 1)) * usableWidth);
-    const y = paddingTop + ((max - bar.price) / span) * usableHeight;
-    return [x, y] as [number, number];
+    const openY = paddingTop + ((max - bar.open) / span) * usableHeight;
+    const closeY = paddingTop + ((max - bar.price) / span) * usableHeight;
+    const highY = paddingTop + ((max - bar.high) / span) * usableHeight;
+    const lowY = paddingTop + ((max - bar.low) / span) * usableHeight;
+    return { x, openY, closeY, highY, lowY, open: bar.open, close: bar.price, time: bar.time };
   });
   const volumeMax = Math.max(...sliced.map((bar) => bar.volume), 1);
-  const last = sliced.at(-1);
   const levels = nearestLevels(sliced);
   const levelY = (price: number) => paddingTop + ((max - price) / span) * usableHeight;
   const showLevels = period === "day" || period === "week" || period === "month";
-  const trendLines = pivotTrendLines(sliced, points);
+  const trendLines = pivotTrendLines(sliced, candles.map((candle) => [candle.x, candle.closeY] as [number, number]), levelY, width - paddingRight, config);
   const ticks = axisTicks(min, max);
-  const times = timeTicks(sliced, points, period);
+  const times = timeTicks(sliced, candles.map((candle) => [candle.x, candle.closeY] as [number, number]), period);
 
   if (sliced.length < 2) {
     return <div className="chart-empty">분봉 데이터를 기다리는 중입니다.</div>;
@@ -110,43 +257,91 @@ function LineChart({ bars, period }: { bars: MarketBar[]; period: ChartPeriod })
 
   return (
     <svg className="market-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${PERIODS.find((item) => item.value === period)?.title ?? "차트"} 가격 차트`}>
-      <defs>
-        <linearGradient id="priceFill" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stopColor="#2bd6a2" stopOpacity="0.24" />
-          <stop offset="100%" stopColor="#2bd6a2" stopOpacity="0" />
-        </linearGradient>
-      </defs>
       {[0, 1, 2, 3].map((line) => {
         const y = paddingTop + (line / 3) * usableHeight;
         return <line className="chart-grid" key={line} x1={paddingLeft} x2={width - paddingRight} y1={y} y2={y} />;
       })}
       <rect className="volume-zone" x={paddingLeft} y={volumeTop} width={usableWidth} height={volumeHeight} rx="6" />
-      {sliced.map((bar, index) => {
-        const x = paddingLeft + (sliced.length <= 1 ? 0 : (index / (sliced.length - 1)) * usableWidth);
-        const h = Math.max((bar.volume / volumeMax) * (volumeHeight - 8), 1);
-        return <rect className="volume-bar" key={`${bar.time}-${index}`} x={x - 2} y={volumeBase - h} width="3" height={h} />;
+      {candles.map((candle, index) => {
+        const bodyTop = Math.min(candle.openY, candle.closeY);
+        const bodyHeight = Math.max(Math.abs(candle.closeY - candle.openY), 1.5);
+        const bodyWidth = Math.max(sliced.length > 40 ? 4 : sliced.length > 20 ? 6 : 9, 2);
+        const bullish = candle.close >= candle.open;
+        const sourceBar = sliced[index];
+        const h = Math.max((sourceBar.volume / volumeMax) * (volumeHeight - 8), 1);
+        return (
+          <g key={`${candle.time}-${index}`}>
+            <line
+              className={`candle-wick ${bullish ? "bull" : "bear"}`}
+              x1={candle.x}
+              x2={candle.x}
+              y1={candle.highY}
+              y2={candle.lowY}
+            />
+            <rect
+              className={`candle-body ${bullish ? "bull" : "bear"}`}
+              x={candle.x - bodyWidth / 2}
+              y={bodyTop}
+              width={bodyWidth}
+              height={bodyHeight}
+              rx="1.5"
+            />
+            <rect className="volume-bar" x={candle.x - 2} y={volumeBase - h} width="3" height={h} />
+          </g>
+        );
       })}
       <line className="volume-baseline" x1={paddingLeft} x2={width - paddingRight} y1={volumeBase} y2={volumeBase} />
-      <path className="price-area" d={`${pathFromPoints(points)} L ${points.at(-1)?.[0] ?? paddingLeft} ${priceBottom} L ${paddingLeft} ${priceBottom} Z`} />
-      {trendLines.rising && (
-        <line
-          className="trend-line rising"
-          x1={trendLines.rising.start[0]}
-          x2={trendLines.rising.end[0]}
-          y1={trendLines.rising.start[1]}
-          y2={trendLines.rising.end[1]}
-        />
+      {trendLines.support && (
+        <g>
+          <line
+            className="trend-line support"
+            x1={trendLines.support.start[0]}
+            x2={trendLines.support.end[0]}
+            y1={trendLines.support.start[1]}
+            y2={trendLines.support.end[1]}
+          />
+          <g transform={`translate(${trendLines.support.label[0]}, ${trendLines.support.label[1]})`}>
+            <rect className="trend-label-bg support" x="-32" y="-11" width="64" height="18" rx="4" />
+            <text className="trend-label support" textAnchor="middle" dominantBaseline="middle">
+              S {number.format(Math.round(trendLines.support.price))}
+            </text>
+          </g>
+        </g>
       )}
-      {trendLines.falling && (
-        <line
-          className="trend-line falling"
-          x1={trendLines.falling.start[0]}
-          x2={trendLines.falling.end[0]}
-          y1={trendLines.falling.start[1]}
-          y2={trendLines.falling.end[1]}
-        />
+      {trendLines.resistance && (
+        <g>
+          <line
+            className="trend-line resistance"
+            x1={trendLines.resistance.start[0]}
+            x2={trendLines.resistance.end[0]}
+            y1={trendLines.resistance.start[1]}
+            y2={trendLines.resistance.end[1]}
+          />
+          <g transform={`translate(${trendLines.resistance.label[0]}, ${trendLines.resistance.label[1]})`}>
+            <rect className="trend-label-bg resistance" x="-32" y="-11" width="64" height="18" rx="4" />
+            <text className="trend-label resistance" textAnchor="middle" dominantBaseline="middle">
+              R {number.format(Math.round(trendLines.resistance.price))}
+            </text>
+          </g>
+        </g>
       )}
-      <path className="price-line" d={pathFromPoints(points)} />
+      {trendLines.lowerChannel && (
+        <g>
+          <line
+            className="trend-line lower-channel"
+            x1={trendLines.lowerChannel.start[0]}
+            x2={trendLines.lowerChannel.end[0]}
+            y1={trendLines.lowerChannel.start[1]}
+            y2={trendLines.lowerChannel.end[1]}
+          />
+          <g transform={`translate(${trendLines.lowerChannel.label[0]}, ${trendLines.lowerChannel.label[1]})`}>
+            <rect className="trend-label-bg lower-channel" x="-28" y="-11" width="56" height="18" rx="4" />
+            <text className="trend-label lower-channel" textAnchor="middle" dominantBaseline="middle">
+              {number.format(Math.round(trendLines.lowerChannel.price))}
+            </text>
+          </g>
+        </g>
+      )}
       {showLevels && levels.resistance && (
         <g>
           <line className="resistance-line" x1={paddingLeft} x2={width - paddingRight} y1={levelY(levels.resistance)} y2={levelY(levels.resistance)} />
@@ -165,7 +360,6 @@ function LineChart({ bars, period }: { bars: MarketBar[]; period: ChartPeriod })
       {times.map((time) => (
         <text className="time-axis-label" key={`${time.label}-${time.x}`} x={time.x} y={height - 12} textAnchor="middle">{time.label}</text>
       ))}
-      {last && <circle className="price-dot" cx={points.at(-1)?.[0]} cy={points.at(-1)?.[1]} r="4" />}
     </svg>
   );
 }
@@ -210,21 +404,99 @@ export function MarketChartPanel({
   strategy,
   error,
   period,
+  selectedSymbol,
   onPeriodChange,
+  onSymbolChange,
 }: {
   quote: MarketQuote | null;
   bars: MarketBar[];
   strategy: StrategyStatusData | null;
   error: string;
   period: ChartPeriod;
+  selectedSymbol: string;
   onPeriodChange: (period: ChartPeriod) => void;
+  onSymbolChange: (symbol: string) => void;
 }) {
-  const symbol = quote?.symbol ?? strategy?.watched_symbols?.[0] ?? "005930";
-  const signal = strategy?.signals?.find((item) => item.symbol === symbol) ?? strategy?.signals?.[0];
+  const [searchTerm, setSearchTerm] = useState("");
+  const [results, setResults] = useState<StockSearchResult[]>([]);
+  const [searchError, setSearchError] = useState("");
+  const [hasSearched, setHasSearched] = useState(false);
+  const [calculatedSignal, setCalculatedSignal] = useState<StrategySignalData | null>(null);
+  const [scoreError, setScoreError] = useState("");
+  const [scoreLoading, setScoreLoading] = useState(false);
+  const symbol = quote?.symbol ?? selectedSymbol ?? strategy?.watched_symbols?.[0] ?? "005930";
+  const watchedSignal = strategy?.signals?.find((item) => item.symbol === symbol);
+  const signal = calculatedSignal?.symbol === symbol ? calculatedSignal : watchedSignal;
   const previous = bars.length > 1 ? bars.at(-2)?.price ?? 0 : 0;
   const current = quote?.price ?? bars.at(-1)?.price ?? 0;
   const change = previous > 0 ? ((current - previous) / previous) * 100 : 0;
   const periodTitle = PERIODS.find((item) => item.value === period)?.title ?? "차트";
+  const sliced = bars.slice(-90);
+  const chartHigh = sliced.length > 0 ? Math.max(...sliced.map((bar) => bar.high)) : 0;
+  const chartLow = sliced.length > 0 ? Math.min(...sliced.map((bar) => bar.low)) : 0;
+  const chartRangePct = chartLow > 0 && chartHigh > chartLow ? ((chartHigh - chartLow) / chartLow) * 100 : 0;
+  const lastVolume = sliced.at(-1)?.volume ?? 0;
+  const averageVolume = sliced.length > 0 ? sliced.reduce((sum, bar) => sum + bar.volume, 0) / sliced.length : 0;
+  const volumeRatio = averageVolume > 0 ? lastVolume / averageVolume : 0;
+  const levels = nearestLevels(sliced);
+  const supportLabel = levels.support ? `S ${number.format(Math.round(levels.support))}` : "S -";
+  const resistanceLabel = levels.resistance ? `R ${number.format(Math.round(levels.resistance))}` : "R -";
+  const signalLabel = signal ? `${signal.action} ${Number(signal.score).toFixed(1)}` : scoreLoading ? "SCORING" : "NO SIGNAL";
+
+  useEffect(() => {
+    const query = searchTerm.trim();
+    if (query.length < 1) {
+      setResults([]);
+      setSearchError("");
+      setHasSearched(false);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void api.stockSearch(query)
+        .then((items) => {
+          setResults(items);
+          setSearchError("");
+          setHasSearched(true);
+        })
+        .catch((caught) => {
+          setResults([]);
+          setSearchError(caught instanceof Error ? caught.message : "종목 검색에 실패했습니다.");
+          setHasSearched(true);
+        });
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [searchTerm]);
+
+  useEffect(() => {
+    if (!symbol || !/^\d{6}$/.test(symbol)) return;
+    let cancelled = false;
+    setScoreLoading(true);
+    setScoreError("");
+    void api.strategyScore(symbol)
+      .then((nextSignal) => {
+        if (cancelled) return;
+        setCalculatedSignal(nextSignal);
+        setScoreError("");
+      })
+      .catch((caught) => {
+        if (cancelled) return;
+        setCalculatedSignal(null);
+        setScoreError(caught instanceof Error ? caught.message : "전략 점수 계산에 실패했습니다.");
+      })
+      .finally(() => {
+        if (!cancelled) setScoreLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [symbol]);
+
+  function selectStock(stock: StockSearchResult) {
+    onSymbolChange(stock.symbol);
+    setSearchTerm(stock.name);
+    setResults([]);
+    setHasSearched(false);
+  }
 
   return (
     <section className="market-panel">
@@ -235,6 +507,28 @@ export function MarketChartPanel({
             <h2>{quote?.name || "종목명 확인 중"}</h2>
             <span>{symbol}</span>
           </div>
+        </div>
+        <div className="stock-search">
+          <input
+            aria-label="종목 검색"
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder="종목명 또는 코드 검색"
+            type="search"
+            value={searchTerm}
+          />
+          {(results.length > 0 || searchError || (hasSearched && searchTerm.trim())) && (
+            <div className="stock-search-results">
+              {searchError && <p>{searchError}</p>}
+              {!searchError && results.length === 0 && <p>검색 결과가 없습니다.</p>}
+              {results.map((stock) => (
+                <button key={stock.symbol} onClick={() => selectStock(stock)} type="button">
+                  <strong>{stock.name}</strong>
+                  <span>{stock.symbol}</span>
+                  <em>{stock.market}</em>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <div className="quote-price">
           <strong>{current > 0 ? number.format(current) : "-"}</strong>
@@ -247,7 +541,7 @@ export function MarketChartPanel({
             <span>{periodTitle}</span>
             <em>{formatBarTime(bars.at(-1)?.time ?? "", period)}</em>
           </div>
-          {error ? <div className="chart-empty error">{error}</div> : <LineChart bars={bars} period={period} />}
+          {error ? <div className="chart-empty error">{error}</div> : <CandleChart bars={bars} period={period} />}
           <div className="period-control" role="tablist" aria-label="차트 기간">
             {PERIODS.map((item) => (
               <button
@@ -261,6 +555,28 @@ export function MarketChartPanel({
                 {item.label}
               </button>
             ))}
+          </div>
+          <div className="chart-insights" aria-label="차트 보조 지표">
+            <div>
+              <span>범위</span>
+              <strong>{chartLow > 0 && chartHigh > 0 ? `${number.format(Math.round(chartLow))} - ${number.format(Math.round(chartHigh))}` : "-"}</strong>
+              <em>{chartRangePct > 0 ? `${chartRangePct.toFixed(2)}%` : "대기"}</em>
+            </div>
+            <div>
+              <span>거래량</span>
+              <strong>{lastVolume > 0 ? number.format(lastVolume) : "-"}</strong>
+              <em>{volumeRatio > 0 ? `평균 ${volumeRatio.toFixed(1)}x` : "대기"}</em>
+            </div>
+            <div>
+              <span>지지 / 저항</span>
+              <strong>{supportLabel} · {resistanceLabel}</strong>
+              <em>{periodTitle}</em>
+            </div>
+            <div>
+              <span>전략 점수</span>
+              <strong className={signal ? scoreTone(signal.action) : "neutral"}>{signalLabel}</strong>
+              <em>{scoreLoading ? "전략 점수 계산 중" : scoreError || signal?.reason || "전략 신호 대기"}</em>
+            </div>
           </div>
         </div>
         <aside className="score-deck">
@@ -283,7 +599,7 @@ export function MarketChartPanel({
                 <em>{Number(component.score).toFixed(0)}</em>
               </div>
             ))}
-            {!signal && <p className="component-empty">전략 점수는 실시간 데이터가 준비되면 표시됩니다.</p>}
+            {!signal && <p className="component-empty">{scoreLoading ? "검색 종목의 전략 점수를 계산 중입니다." : scoreError || "전략 점수는 시세 데이터가 준비되면 표시됩니다."}</p>}
           </div>
         </aside>
       </div>

@@ -2,10 +2,11 @@ import json
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import desc, select
+from sqlalchemy import case, delete, desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import EventLog, FillRecord, OrderRecord, RuntimeState, StrategyEntry
+from app.db.models import EventLog, FillRecord, ListedStock, OrderRecord, RuntimeState, StrategyEntry
+from app.stock_listing import ListedStock as ParsedListedStock
 
 
 class TradingRepository:
@@ -238,6 +239,69 @@ class TradingRepository:
         else:
             row.value = value
         await self.session.commit()
+
+    async def sync_listed_stocks(self, stocks: list[ParsedListedStock]) -> int:
+        incoming = {stock.symbol: stock for stock in stocks}
+        existing = {
+            stock.symbol: stock
+            for stock in await self.session.scalars(select(ListedStock))
+        }
+        changed = 0
+        for symbol, stock in incoming.items():
+            row = existing.get(symbol)
+            if row is None:
+                self.session.add(
+                    ListedStock(
+                        symbol=stock.symbol,
+                        name=stock.name,
+                        market=stock.market,
+                        sector=stock.sector,
+                        product=stock.product,
+                    )
+                )
+                changed += 1
+                continue
+            if (
+                row.name != stock.name
+                or row.market != stock.market
+                or row.sector != stock.sector
+                or row.product != stock.product
+            ):
+                row.name = stock.name
+                row.market = stock.market
+                row.sector = stock.sector
+                row.product = stock.product
+                changed += 1
+        stale = set(existing) - set(incoming)
+        if stale:
+            await self.session.execute(delete(ListedStock).where(ListedStock.symbol.in_(stale)))
+            changed += len(stale)
+        await self.session.commit()
+        return changed
+
+    async def search_listed_stocks(self, query: str, limit: int = 20) -> list[ListedStock]:
+        normalized = query.strip()
+        if not normalized:
+            return []
+        pattern = f"%{normalized}%"
+        starts = f"{normalized}%"
+        rows = await self.session.scalars(
+            select(ListedStock)
+            .where(
+                or_(
+                    ListedStock.symbol.like(pattern),
+                    ListedStock.name.like(pattern),
+                    ListedStock.market.like(pattern),
+                )
+            )
+            .order_by(
+                case((ListedStock.symbol == normalized, 0), (ListedStock.name == normalized, 1), else_=2),
+                case((ListedStock.symbol.like(starts), 0), (ListedStock.name.like(starts), 1), else_=2),
+                ListedStock.symbol,
+            )
+            .limit(limit)
+        )
+        return list(rows)
 
     async def record_strategy_entry(self, symbol: str, order_id: str) -> bool:
         trading_date = date.today().isoformat()

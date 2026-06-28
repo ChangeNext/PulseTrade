@@ -336,6 +336,37 @@ class StrategyRuntime:
             self.latest_signals[symbol] = self.scorer.evaluate(context)
         self.last_snapshot_refresh_at = now
 
+    async def score_symbol_snapshot(self, symbol: str) -> ScoredSignal:
+        now = datetime.now(KST)
+        bars = await self.market.get_minute_bars(symbol, max_pages=4)
+        if not bars:
+            raise ValueError("Intraday bars are unavailable")
+        series = SymbolBars({bar.time: bar for bar in bars})
+        market = series.snapshot(symbol, now)
+        if market is None:
+            raise ValueError("Not enough intraday bars to score this symbol")
+        daily_bars = self.daily_bars.get(symbol)
+        if daily_bars is None:
+            daily_bars = self._to_price_bars(await self.market.get_period_bars(symbol, "day"))
+        if not self.market_indices:
+            await self._refresh_market_indices()
+        context = SignalContext(
+            market=market,
+            orderbook=self.orderbooks.get(symbol),
+            trade_strength=self.trade_strengths.get(symbol),
+            recent_prices=series.recent_prices(),
+            intraday_bars=series.price_bars(),
+            daily_bars=daily_bars,
+            market_indices=self.market_indices,
+            already_held=self.engine.context.position_quantities.get(symbol, 0) > 0,
+            has_pending_order=symbol in self.engine.context.pending_symbols,
+            trading_halted=self.trading_halts.get(symbol, False),
+            vi_active=False,
+        )
+        signal = self.scorer.evaluate(context)
+        self.latest_signals[symbol] = signal
+        return signal
+
     async def _record_action_change(self, signal: ScoredSignal) -> None:
         if self._last_actions.get(signal.symbol) == signal.action:
             return
@@ -441,18 +472,22 @@ class StrategyRuntime:
 
     def signal_payloads(self) -> list[dict]:
         return [
-            {
-                "symbol": signal.symbol,
-                "action": signal.action,
-                "score": signal.score,
-                "reason": signal.reason,
-                "components": [
-                    {"name": item.name, "score": item.score, "ready": item.ready, "reason": item.reason}
-                    for item in signal.components
-                ],
-            }
+            self.signal_payload(signal)
             for signal in self.latest_signals.values()
         ]
+
+    @staticmethod
+    def signal_payload(signal: ScoredSignal) -> dict:
+        return {
+            "symbol": signal.symbol,
+            "action": signal.action,
+            "score": signal.score,
+            "reason": signal.reason,
+            "components": [
+                {"name": item.name, "score": item.score, "ready": item.ready, "reason": item.reason}
+                for item in signal.components
+            ],
+        }
 
     def _update_volatility_guard(self, tick: RealtimeTick) -> None:
         now = datetime.now(KST)

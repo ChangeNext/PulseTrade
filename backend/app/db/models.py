@@ -73,6 +73,16 @@ class RuntimeState(TimestampMixin, Base):
     value: Mapped[str] = mapped_column(Text, default="")
 
 
+class ListedStock(TimestampMixin, Base):
+    __tablename__ = "listed_stocks"
+
+    symbol: Mapped[str] = mapped_column(String(6), primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), index=True)
+    market: Mapped[str] = mapped_column(String(40), index=True)
+    sector: Mapped[str] = mapped_column(String(240), default="")
+    product: Mapped[str] = mapped_column(Text, default="")
+
+
 class StrategyEntry(TimestampMixin, Base):
     __tablename__ = "strategy_entries"
     __table_args__ = (UniqueConstraint("trading_date", "symbol", name="uq_strategy_entry_day_symbol"),)
