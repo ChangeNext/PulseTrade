@@ -20,9 +20,21 @@ from app.kis.order import KISOrderService
 from app.kis.websocket import KISWebSocketClient
 from app.notifications.telegram import TelegramNotifier
 from app.schemas.account import AccountSummary, Position
-from app.schemas.market import MarketBar, MarketQuote, StockSearchResult
+from app.schemas.market import (
+    MarketBar,
+    MarketIndexView,
+    MarketQuote,
+    MarketRankingResponse,
+    MarketRankingRow,
+    MarketSessionView,
+    OrderBookView,
+    StockProfile,
+    StockSearchResult,
+)
 from app.schemas.order import CancelOrderResponse, KillSwitchRequest, ManualOrderRequest, OrderResponse
+from app.schemas.scanner import ScannerCandidateResponse, ScannerResponse
 from app.schemas.strategy import AutomationRequest, SignalScore, StrategyStatus
+from app.scanner import StockScanner
 from app.stock_listing import StockListingRepository
 from app.strategies.runtime import StrategyRuntime
 from app.trading.execution_engine import ExecutionEngine, IdempotencyConflict
@@ -214,6 +226,88 @@ def raise_kis_http_error(error: Exception) -> None:
         status_code=503,
         detail={"code": "KIS_NOT_CONFIGURED", "message": str(error)},
     ) from error
+
+
+@app.get("/api/market/rankings", response_model=MarketRankingResponse)
+async def market_rankings_static(request: Request, type: str = "volume", limit: int = 20) -> MarketRankingResponse:
+    if limit < 1 or limit > 50:
+        raise HTTPException(status_code=422, detail="Limit must be between 1 and 50")
+    service = market_service_from(request)
+    if service is None:
+        raise HTTPException(status_code=503, detail="KIS market service is not configured")
+    try:
+        rows = await service.get_ranking(type, limit=limit)
+    except (KISAPIError, KISConfigurationError) as error:
+        raise_kis_http_error(error)
+    return MarketRankingResponse(
+        type=type,
+        rows=[
+            MarketRankingRow(
+                rank=row.rank,
+                symbol=row.symbol,
+                name=row.name,
+                price=row.price,
+                change_pct=row.change_pct,
+                volume=row.volume,
+                trade_value=row.trade_value,
+                score=row.score,
+                source=row.source,
+            )
+            for row in rows
+        ],
+    )
+
+
+@app.get("/api/market/indices", response_model=list[MarketIndexView])
+async def market_indices_static(request: Request) -> list[MarketIndexView]:
+    runtime = request.app.state.strategy_runtime
+    if runtime is not None and runtime.market_indices:
+        return [
+            MarketIndexView(
+                symbol=row.symbol,
+                name=row.name,
+                price=row.price,
+                change_pct=row.change_pct,
+                score=row.score,
+                ready=row.ready,
+                reason=row.reason,
+            )
+            for row in runtime.market_indices
+        ]
+    service = market_service_from(request)
+    if service is None:
+        raise HTTPException(status_code=503, detail="KIS market service is not configured")
+    try:
+        quotes = await service.get_market_indices()
+    except (KISAPIError, KISConfigurationError) as error:
+        raise_kis_http_error(error)
+    return [
+        MarketIndexView(
+            symbol=row.symbol,
+            name=row.name,
+            price=row.price,
+            change_pct=row.change_pct,
+            reason="REST index quote",
+        )
+        for row in quotes
+    ]
+
+
+@app.get("/api/market/session", response_model=MarketSessionView)
+async def market_session_static(request: Request) -> MarketSessionView:
+    service = market_service_from(request)
+    now = datetime.now(KST)
+    try:
+        is_trading_day = await service.is_trading_day() if service is not None else now.weekday() < 5
+    except (KISAPIError, KISConfigurationError):
+        is_trading_day = now.weekday() < 5
+    runtime = request.app.state.strategy_runtime
+    return MarketSessionView(
+        is_trading_day=is_trading_day,
+        market_state="OPEN" if is_trading_day and time(9, 0) <= now.time() <= time(15, 30) else "CLOSED",
+        websocket_market_state=getattr(runtime, "market_operation_state", None) if runtime else None,
+        updated_at=now.isoformat(),
+    )
 
 
 @app.get("/api/health")
@@ -424,6 +518,76 @@ async def market_bars(symbol: str, request: Request, period: str = "10m") -> lis
     ]
 
 
+def orderbook_view(
+    symbol: str, book, *, source: str
+) -> OrderBookView:
+    midpoint = (book.best_ask + book.best_bid) / Decimal("2") if book.best_ask > 0 and book.best_bid > 0 else Decimal("0")
+    spread_bps = (
+        (book.best_ask - book.best_bid) / midpoint * Decimal("10000")
+        if midpoint > 0
+        else Decimal("0")
+    )
+    total = book.total_bid_quantity + book.total_ask_quantity
+    imbalance = (
+        Decimal(book.total_bid_quantity - book.total_ask_quantity) / Decimal(total) * Decimal("100")
+        if total > 0
+        else Decimal("0")
+    )
+    return OrderBookView(
+        symbol=symbol,
+        best_ask=book.best_ask,
+        best_bid=book.best_bid,
+        total_ask_quantity=book.total_ask_quantity,
+        total_bid_quantity=book.total_bid_quantity,
+        best_ask_quantity=book.best_ask_quantity,
+        best_bid_quantity=book.best_bid_quantity,
+        spread_bps=spread_bps,
+        imbalance=imbalance,
+        received_at=book.received_at.isoformat() if book.received_at else None,
+        source=source,
+    )
+
+
+@app.get("/api/market/{symbol}/orderbook", response_model=OrderBookView)
+async def market_orderbook(symbol: str, request: Request) -> OrderBookView:
+    if not symbol.isdigit() or len(symbol) != 6:
+        raise HTTPException(status_code=422, detail="Symbol must be a 6-digit stock code")
+    runtime = request.app.state.strategy_runtime
+    if runtime is not None and symbol in runtime.orderbooks:
+        return orderbook_view(symbol, runtime.orderbooks[symbol], source="WEBSOCKET")
+    service = market_service_from(request)
+    if service is None:
+        raise HTTPException(status_code=503, detail="KIS market service is not configured")
+    try:
+        book = await service.get_orderbook(symbol)
+    except (KISAPIError, KISConfigurationError) as error:
+        raise_kis_http_error(error)
+    return orderbook_view(symbol, book, source="REST")
+
+
+@app.get("/api/market/{symbol}/profile", response_model=StockProfile)
+async def stock_profile(symbol: str, request: Request) -> StockProfile:
+    if not symbol.isdigit() or len(symbol) != 6:
+        raise HTTPException(status_code=422, detail="Symbol must be a 6-digit stock code")
+    service = market_service_from(request)
+    if service is None:
+        raise HTTPException(status_code=503, detail="KIS market service is not configured")
+    try:
+        profile = await service.get_stock_profile(symbol)
+    except (KISAPIError, KISConfigurationError) as error:
+        raise_kis_http_error(error)
+    return StockProfile(
+        symbol=profile.symbol,
+        name=profile.name,
+        market=profile.market,
+        sector=profile.sector,
+        product=profile.product,
+        listed_shares=profile.listed_shares,
+        capital=profile.capital,
+        par_value=profile.par_value,
+    )
+
+
 @app.get("/api/stocks/search", response_model=list[StockSearchResult])
 async def search_stocks(q: str, session: SessionDep, limit: int = 20) -> list[StockSearchResult]:
     if limit < 1 or limit > 50:
@@ -438,6 +602,39 @@ async def search_stocks(q: str, session: SessionDep, limit: int = 20) -> list[St
         )
         for stock in await TradingRepository(session).search_listed_stocks(q, limit)
     ]
+
+
+@app.get("/api/scanner/candidates", response_model=ScannerResponse)
+async def scanner_candidates(request: Request) -> ScannerResponse:
+    service = market_service_from(request)
+    if service is None:
+        raise HTTPException(status_code=503, detail="KIS market service is not configured")
+    try:
+        candidates = await asyncio.wait_for(StockScanner(settings, service).scan(), timeout=45)
+    except asyncio.TimeoutError as error:
+        raise HTTPException(status_code=504, detail="Scanner timed out") from error
+    except (KISAPIError, KISConfigurationError) as error:
+        raise_kis_http_error(error)
+    return ScannerResponse(
+        universe_size=len(settings.scanner_symbol_list),
+        candidates=[
+            ScannerCandidateResponse(
+                symbol=row.symbol,
+                name=row.name,
+                price=row.price,
+                change_pct=row.change_pct,
+                volume=row.volume,
+                trade_value=row.trade_value,
+                vwap=row.vwap,
+                volume_spike=row.volume_spike,
+                spread_bps=row.spread_bps,
+                score=row.score,
+                passed=row.passed,
+                reasons=list(row.reasons),
+            )
+            for row in candidates
+        ],
+    )
 
 
 @app.get("/api/orders")

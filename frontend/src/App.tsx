@@ -7,11 +7,13 @@ import { ManualOrderPanel } from "./components/ManualOrderPanel";
 import { MarketChartPanel } from "./components/MarketChartPanel";
 import { OrderLogTable } from "./components/OrderLogTable";
 import { PositionTable } from "./components/PositionTable";
+import { ScannerPanel } from "./components/ScannerPanel";
 import { StrategyPanel } from "./components/StrategyPanel";
 import { SystemLog } from "./components/SystemLog";
 import type { AccountSummaryData, Position } from "./types/account";
 import type { ChartPeriod, MarketBar, MarketQuote } from "./types/market";
 import type { Order } from "./types/order";
+import type { ScannerResponse } from "./types/scanner";
 import type { HealthStatus, StrategyStatusData, SystemLogEntry } from "./types/strategy";
 
 export default function App() {
@@ -20,11 +22,13 @@ export default function App() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [strategy, setStrategy] = useState<StrategyStatusData | null>(null);
+  const [scanner, setScanner] = useState<ScannerResponse | null>(null);
   const [quote, setQuote] = useState<MarketQuote | null>(null);
   const [bars, setBars] = useState<MarketBar[]>([]);
   const [selectedSymbol, setSelectedSymbol] = useState("005930");
   const [chartPeriod, setChartPeriod] = useState<ChartPeriod>("10m");
   const [marketError, setMarketError] = useState("");
+  const [scannerError, setScannerError] = useState("");
   const [error, setError] = useState("");
   const [logs, setLogs] = useState<SystemLogEntry[]>([]);
   const previousHealth = useRef<HealthStatus | null>(null);
@@ -50,6 +54,12 @@ export default function App() {
         setBars(nextBars); setMarketError("");
       } catch (caught) {
         setMarketError(caught instanceof Error ? caught.message : "시세 데이터를 가져오지 못했습니다.");
+      }
+      try {
+        const nextScanner = await api.scannerCandidates();
+        setScanner(nextScanner); setScannerError("");
+      } catch (caught) {
+        setScannerError(caught instanceof Error ? caught.message : "Scanner data unavailable");
       }
       const previous = previousHealth.current;
       if (!previous) {
@@ -139,6 +149,7 @@ export default function App() {
           onPeriodChange={setChartPeriod}
           onSymbolChange={setSelectedSymbol}
         />
+        <ScannerPanel scanner={scanner} error={scannerError} selectedSymbol={selectedSymbol} onSelect={setSelectedSymbol} />
         <div className="control-grid">
           <ManualOrderPanel mode={mode} liveEnabled={liveEnabled} emergencyStopped={stopped} onSubmitted={refresh} onSystemMessage={(message, isError) => appendLog(isError ? "RISK" : "ORDER", isError ? "BLOCK" : "INFO", message)} />
           <StrategyPanel strategy={strategy} emergencyStopped={stopped} onAutoOrderToggle={toggleAutomation} />

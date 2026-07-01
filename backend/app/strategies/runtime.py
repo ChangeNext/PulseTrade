@@ -7,7 +7,14 @@ from app.config import Settings
 from app.db.repository import TradingRepository
 from app.db.session import AsyncSessionFactory
 from app.kis.market import KISMarketService, MinuteBar
-from app.kis.websocket import KISWebSocketClient, OrderBookTick, RealtimeTick
+from app.kis.websocket import (
+    ExecutionNotice,
+    IndexTick,
+    KISWebSocketClient,
+    MarketOperationTick,
+    OrderBookTick,
+    RealtimeTick,
+)
 from app.schemas.order import ManualOrderRequest
 from app.strategies.base import (
     MarketSnapshot,
@@ -122,6 +129,9 @@ class StrategyRuntime:
         self.orderbooks: dict[str, OrderBookSnapshot] = {}
         self.trade_strengths: dict[str, Decimal] = {}
         self.trading_halts: dict[str, bool] = {}
+        self.execution_notices: dict[str, ExecutionNotice] = {}
+        self.market_operation_state: str | None = None
+        self.index_ticks: dict[str, IndexTick] = {}
         self.last_ticks: dict[str, tuple[Decimal, datetime]] = {}
         self.volatility_blocked_until: dict[str, datetime] = {}
         self.vi_states: dict[str, bool] = {}
@@ -191,7 +201,9 @@ class StrategyRuntime:
         while True:
             try:
                 await self.initialize()
-                async for event in self.websocket.stream_market(self.symbols):
+                async for event in self.websocket.stream_market(
+                    self.symbols, hts_id=self.settings.kis_hts_id
+                ):
                     self.engine.context.websocket_connected = True
                     if isinstance(event, RealtimeTick):
                         self.trade_strengths[event.symbol] = event.trade_strength
@@ -223,6 +235,14 @@ class StrategyRuntime:
                                 TradingRepository(session),
                             )
                         await self.evaluate_symbol(event.symbol)
+                    elif isinstance(event, ExecutionNotice):
+                        self.execution_notices[event.broker_order_id] = event
+                        async with AsyncSessionFactory() as session:
+                            await self._apply_execution_notice(event, TradingRepository(session))
+                    elif isinstance(event, MarketOperationTick):
+                        self.market_operation_state = event.market_state
+                    elif isinstance(event, IndexTick):
+                        self.index_ticks[event.symbol] = event
                 raise ConnectionError("KIS WebSocket stream ended")
             except asyncio.CancelledError:
                 raise
@@ -382,6 +402,53 @@ class StrategyRuntime:
             await self.engine.notifier.send(
                 "STRATEGY_SIGNAL", f"{signal.symbol} {signal.action} score={signal.score}"
             )
+
+    async def _apply_execution_notice(
+        self, notice: ExecutionNotice, repository: TradingRepository
+    ) -> None:
+        if not notice.broker_order_id:
+            return
+        record = await repository.get_order_by_broker_id(notice.broker_order_id)
+        if record is None:
+            await repository.add_event(
+                "EXECUTION_NOTICE",
+                notice.message,
+                {
+                    "broker_order_id": notice.broker_order_id,
+                    "symbol": notice.symbol,
+                    "quantity": notice.quantity,
+                    "price": notice.price,
+                },
+            )
+            return
+        filled = max(record.filled_quantity, notice.filled_quantity or notice.quantity)
+        state = "FILLED" if filled >= record.quantity and record.quantity > 0 else "PARTIALLY_FILLED"
+        await repository.update_order(
+            record,
+            state=state,
+            filled_quantity=filled,
+            average_fill_price=notice.price if notice.price > 0 else record.average_fill_price,
+            message=notice.message,
+        )
+        if notice.quantity > 0 and notice.price > 0:
+            await repository.add_fill_once(
+                fill_key=f"ws:{notice.broker_order_id}:{filled}:{notice.price}",
+                order_id=record.id,
+                quantity=notice.quantity,
+                price=notice.price,
+            )
+        if state == "FILLED":
+            self.engine.context.active_order_keys.discard(f"{record.symbol}:{record.side}")
+            if record.side == "BUY":
+                self.engine.context.pending_symbols.discard(record.symbol)
+            else:
+                self.engine.context.pending_sell_quantities[record.symbol] = max(
+                    self.engine.context.pending_sell_quantities.get(record.symbol, 0)
+                    - notice.quantity,
+                    0,
+                )
+            if record.source == "EXIT":
+                await repository.close_strategy_entry_by_exit(record.id)
 
     async def _submit_entry(self, context: SignalContext, signal: ScoredSignal) -> None:
         price = context.orderbook.best_ask if context.orderbook and context.orderbook.best_ask > 0 else context.market.price

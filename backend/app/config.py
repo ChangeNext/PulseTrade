@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     kis_account_product_code: str = "01"
     kis_base_url: str = ""
     kis_websocket_url: str = ""
+    kis_hts_id: str = ""
 
     database_url: str = "sqlite+aiosqlite:///./pulsetrade.db"
     telegram_bot_token: str = ""
@@ -41,6 +42,17 @@ class Settings(BaseSettings):
     max_daily_orders: int = 5
     max_position_amount_krw: int = 300_000
     strategy_symbols: str = "005930"
+    scanner_symbols: str = (
+        "005930,000660,373220,207940,005380,000270,035420,035720,068270,105560,"
+        "055550,012330,028260,005490,066570,096770,051910,006400,003670,035250,"
+        "323410,034020,086790,015760,032830,033780,017670,009150,011200,042660"
+    )
+    scanner_min_trade_value_krw: int = 30_000_000_000
+    scanner_min_volume_spike: float = 1.3
+    scanner_min_change_pct: float = 0.2
+    scanner_max_change_pct: float = 12.0
+    scanner_max_spread_bps: float = 20.0
+    scanner_max_candidates: int = 8
     auto_order_budget_krw: int = 100_000
     strategy_stop_loss_pct: float = -1.0
     strategy_take_profit_pct: float = 2.0
@@ -93,6 +105,17 @@ class Settings(BaseSettings):
             for symbol in self.strategy_symbols.split(",")
             if symbol.strip().isdigit() and len(symbol.strip()) == 6
         ]
+
+    @property
+    def scanner_symbol_list(self) -> list[str]:
+        seen: set[str] = set()
+        symbols: list[str] = []
+        for symbol in self.scanner_symbols.split(","):
+            normalized = symbol.strip()
+            if normalized.isdigit() and len(normalized) == 6 and normalized not in seen:
+                seen.add(normalized)
+                symbols.append(normalized)
+        return symbols
 
     @property
     def market_proxy_symbol_list(self) -> list[str]:

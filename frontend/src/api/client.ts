@@ -1,6 +1,15 @@
 import type { AccountSummaryData, Position } from "../types/account";
-import type { ChartPeriod, MarketBar, MarketQuote, StockSearchResult } from "../types/market";
+import type {
+  ChartPeriod,
+  MarketBar,
+  MarketQuote,
+  MarketRankingResponse,
+  OrderBookView,
+  RankingType,
+  StockSearchResult,
+} from "../types/market";
 import type { ManualOrderInput, Order } from "../types/order";
+import type { ScannerResponse } from "../types/scanner";
 import type { HealthStatus, StrategySignalData, StrategyStatusData } from "../types/strategy";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api";
@@ -59,8 +68,53 @@ export const api = {
       volume: Number(bar.volume),
     }));
   },
+  marketOrderbook: async (symbol: string) => {
+    const book = await request<OrderBookView>(`/market/${symbol}/orderbook`);
+    return {
+      ...book,
+      best_ask: Number(book.best_ask),
+      best_bid: Number(book.best_bid),
+      total_ask_quantity: Number(book.total_ask_quantity),
+      total_bid_quantity: Number(book.total_bid_quantity),
+      best_ask_quantity: Number(book.best_ask_quantity),
+      best_bid_quantity: Number(book.best_bid_quantity),
+      spread_bps: Number(book.spread_bps),
+      imbalance: Number(book.imbalance),
+    };
+  },
+  marketRankings: async (type: RankingType) => {
+    const result = await request<MarketRankingResponse>(`/market/rankings?type=${type}&limit=20`);
+    return {
+      ...result,
+      rows: result.rows.map((row) => ({
+        ...row,
+        price: Number(row.price),
+        change_pct: Number(row.change_pct),
+        volume: Number(row.volume),
+        trade_value: Number(row.trade_value),
+        score: Number(row.score),
+      })),
+    };
+  },
   stockSearch: (query: string) =>
     request<StockSearchResult[]>(`/stocks/search?q=${encodeURIComponent(query)}&limit=12`),
+  scannerCandidates: async () => {
+    const result = await request<ScannerResponse>("/scanner/candidates");
+    return {
+      ...result,
+      candidates: result.candidates.map((candidate) => ({
+        ...candidate,
+        price: Number(candidate.price),
+        change_pct: Number(candidate.change_pct),
+        volume: Number(candidate.volume),
+        trade_value: Number(candidate.trade_value),
+        vwap: Number(candidate.vwap),
+        volume_spike: Number(candidate.volume_spike),
+        spread_bps: Number(candidate.spread_bps),
+        score: Number(candidate.score),
+      })),
+    };
+  },
   strategy: () => request<StrategyStatusData>("/strategy"),
   strategyScore: (symbol: string) => request<StrategySignalData>(`/strategy/${symbol}/score`),
   submitOrder: (order: ManualOrderInput) =>
