@@ -133,6 +133,7 @@ class StrategyRuntime:
         self.market_operation_state: str | None = None
         self.index_ticks: dict[str, IndexTick] = {}
         self.last_ticks: dict[str, tuple[Decimal, datetime]] = {}
+        self.persisted_bar_minutes: dict[tuple[str, str], datetime] = {}
         self.volatility_blocked_until: dict[str, datetime] = {}
         self.vi_states: dict[str, bool] = {}
         self.vi_refreshing: set[str] = set()
@@ -210,6 +211,7 @@ class StrategyRuntime:
                         self.trading_halts[event.symbol] = event.trading_halted
                         self._update_volatility_guard(event)
                         self.series[event.symbol].add_tick(event, datetime.now(KST))
+                        await self._persist_latest_bar(event.symbol)
                         await self.evaluate_symbol(event.symbol)
                     elif isinstance(event, OrderBookTick):
                         self.orderbooks[event.symbol] = OrderBookSnapshot(
@@ -402,6 +404,37 @@ class StrategyRuntime:
             await self.engine.notifier.send(
                 "STRATEGY_SIGNAL", f"{signal.symbol} {signal.action} score={signal.score}"
             )
+
+    async def _persist_latest_bar(self, symbol: str) -> None:
+        series = self.series.get(symbol)
+        if series is None or not series.bars:
+            return
+        minute = max(series.bars)
+        key = (symbol, minute)
+        now = datetime.now(KST)
+        last_persisted = self.persisted_bar_minutes.get(key)
+        if last_persisted is not None and (now - last_persisted).total_seconds() < 5:
+            return
+        bar = series.bars[minute]
+        async with AsyncSessionFactory() as session:
+            await TradingRepository(session).upsert_market_bars(
+                symbol,
+                "1m",
+                [
+                    {
+                        "time": bar.time,
+                        "open": bar.open if bar.open > 0 else bar.price,
+                        "high": bar.high,
+                        "low": bar.low,
+                        "close": bar.price,
+                        "volume": bar.volume,
+                    }
+                ],
+                source="WS",
+            )
+        self.persisted_bar_minutes[key] = now
+        if len(self.persisted_bar_minutes) > 2000:
+            self.persisted_bar_minutes = dict(list(self.persisted_bar_minutes.items())[-1000:])
 
     async def _apply_execution_notice(
         self, notice: ExecutionNotice, repository: TradingRepository

@@ -81,6 +81,12 @@ h2 { margin: 0; color: #edf4f7; font-size: 17px; line-height: 1.2; letter-spacin
 .neutral { color: #d8e2e8 !important; }
 
 .control-grid { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 16px; }
+.market-workspace { min-width: 0; display: grid; gap: 10px; }
+.workspace-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 6px; border: 1px solid #20323e; border-radius: 12px; background: #071016; }
+.workspace-tabs button { min-width: 0; min-height: 46px; border: 1px solid transparent; border-radius: 8px; color: #7d929d; background: transparent; font-size: 13px; font-weight: 900; }
+.workspace-tabs button:hover { color: #d8e6ec; border-color: #2a4050; background: #101c24; }
+.workspace-tabs button.active { color: #06110e; border-color: #2bd6a2; background: #2bd6a2; box-shadow: 0 0 24px rgba(43, 214, 162, .16); }
+.discovery-stack { display: grid; gap: 16px; }
 .market-panel { min-width: 0; border: 1px solid #20323e; border-radius: 12px; overflow: hidden; background: #091016; box-shadow: 0 24px 70px rgba(0,0,0,.2); }
 .market-hero { min-height: 86px; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 20px 22px; border-bottom: 1px solid #1b2b35; background: linear-gradient(135deg, #101c24, #0b141b 52%, #111a1d); }
 .quote-title { display: flex; align-items: baseline; gap: 12px; }
@@ -176,9 +182,13 @@ h2 { margin: 0; color: #edf4f7; font-size: 17px; line-height: 1.2; letter-spacin
 .ranking-table { overflow: auto; border: 1px solid #15252e; border-radius: 8px; background: #071016; }
 .ranking-table table { min-width: 760px; }
 .ranking-table tbody tr { cursor: pointer; }
+.ranking-table tbody tr.selected { background: rgba(85, 168, 255, .12); }
 .ranking-symbol { width: 100%; min-width: 0; display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 8px; border: 0; padding: 0; color: inherit; background: transparent; text-align: left; }
 .ranking-symbol strong { color: #e4edf2; font-family: "SFMono-Regular", Consolas, monospace; font-size: 11px; }
 .ranking-symbol span { overflow: hidden; color: #7f929d; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.discovery-panel { padding-bottom: 12px; }
+.discovery-tabs { margin-bottom: 12px; }
+.discovery-table { min-height: 320px; }
 .chart-insights { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
 .chart-insights div { min-width: 0; display: grid; gap: 4px; padding: 10px 11px; border: 1px solid #182934; border-radius: 8px; background: #091117; }
 .chart-insights span { color: #6f8490; font-size: 9px; font-weight: 900; letter-spacing: .12em; }

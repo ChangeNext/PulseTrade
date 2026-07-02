@@ -5,6 +5,7 @@ import { ConnectionStatus } from "./components/ConnectionStatus";
 import { KillSwitchButton } from "./components/KillSwitchButton";
 import { ManualOrderPanel } from "./components/ManualOrderPanel";
 import { MarketChartPanel } from "./components/MarketChartPanel";
+import { MarketDiscoveryPanel } from "./components/MarketDiscoveryPanel";
 import { OrderLogTable } from "./components/OrderLogTable";
 import { PositionTable } from "./components/PositionTable";
 import { ScannerPanel } from "./components/ScannerPanel";
@@ -27,6 +28,7 @@ export default function App() {
   const [bars, setBars] = useState<MarketBar[]>([]);
   const [selectedSymbol, setSelectedSymbol] = useState("005930");
   const [chartPeriod, setChartPeriod] = useState<ChartPeriod>("10m");
+  const [marketWorkspaceTab, setMarketWorkspaceTab] = useState<"detail" | "discovery">("detail");
   const [marketError, setMarketError] = useState("");
   const [scannerError, setScannerError] = useState("");
   const [error, setError] = useState("");
@@ -139,17 +141,45 @@ export default function App() {
 
       <main className="dashboard">
         <AccountSummary data={account} positions={positions} orders={orders} />
-        <MarketChartPanel
-          quote={quote}
-          bars={bars}
-          strategy={strategy}
-          error={marketError}
-          period={chartPeriod}
-          selectedSymbol={selectedSymbol}
-          onPeriodChange={setChartPeriod}
-          onSymbolChange={setSelectedSymbol}
-        />
-        <ScannerPanel scanner={scanner} error={scannerError} selectedSymbol={selectedSymbol} onSelect={setSelectedSymbol} />
+        <section className="market-workspace">
+          <div className="workspace-tabs" role="tablist" aria-label="시장 작업 공간">
+            <button
+              aria-selected={marketWorkspaceTab === "detail"}
+              className={marketWorkspaceTab === "detail" ? "active" : ""}
+              onClick={() => setMarketWorkspaceTab("detail")}
+              role="tab"
+              type="button"
+            >
+              선택 종목 상세
+            </button>
+            <button
+              aria-selected={marketWorkspaceTab === "discovery"}
+              className={marketWorkspaceTab === "discovery" ? "active" : ""}
+              onClick={() => setMarketWorkspaceTab("discovery")}
+              role="tab"
+              type="button"
+            >
+              종목 발굴
+            </button>
+          </div>
+          {marketWorkspaceTab === "detail" ? (
+            <MarketChartPanel
+              quote={quote}
+              bars={bars}
+              strategy={strategy}
+              error={marketError}
+              period={chartPeriod}
+              selectedSymbol={selectedSymbol}
+              onPeriodChange={setChartPeriod}
+              onSymbolChange={setSelectedSymbol}
+            />
+          ) : (
+            <div className="discovery-stack">
+              <MarketDiscoveryPanel selectedSymbol={selectedSymbol} onSelect={setSelectedSymbol} />
+              <ScannerPanel scanner={scanner} error={scannerError} selectedSymbol={selectedSymbol} onSelect={setSelectedSymbol} />
+            </div>
+          )}
+        </section>
         <div className="control-grid">
           <ManualOrderPanel mode={mode} liveEnabled={liveEnabled} emergencyStopped={stopped} onSubmitted={refresh} onSystemMessage={(message, isError) => appendLog(isError ? "RISK" : "ORDER", isError ? "BLOCK" : "INFO", message)} />
           <StrategyPanel strategy={strategy} emergencyStopped={stopped} onAutoOrderToggle={toggleAutomation} />

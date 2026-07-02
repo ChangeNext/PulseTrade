@@ -5,7 +5,15 @@ from decimal import Decimal
 from sqlalchemy import case, delete, desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import EventLog, FillRecord, ListedStock, OrderRecord, RuntimeState, StrategyEntry
+from app.db.models import (
+    EventLog,
+    FillRecord,
+    ListedStock,
+    MarketBarRecord,
+    OrderRecord,
+    RuntimeState,
+    StrategyEntry,
+)
 from app.stock_listing import ListedStock as ParsedListedStock
 
 
@@ -302,6 +310,65 @@ class TradingRepository:
             .limit(limit)
         )
         return list(rows)
+
+    async def market_bars(self, symbol: str, period: str) -> list[MarketBarRecord]:
+        rows = await self.session.scalars(
+            select(MarketBarRecord)
+            .where(MarketBarRecord.symbol == symbol, MarketBarRecord.period == period)
+            .order_by(MarketBarRecord.time)
+        )
+        return list(rows)
+
+    async def upsert_market_bars(
+        self,
+        symbol: str,
+        period: str,
+        bars: list[dict],
+        *,
+        source: str = "KIS",
+    ) -> int:
+        if not bars:
+            return 0
+        times = [str(bar["time"]) for bar in bars]
+        existing = {
+            row.time: row
+            for row in await self.session.scalars(
+                select(MarketBarRecord).where(
+                    MarketBarRecord.symbol == symbol,
+                    MarketBarRecord.period == period,
+                    MarketBarRecord.time.in_(times),
+                )
+            )
+        }
+        changed = 0
+        for bar in bars:
+            time = str(bar["time"])
+            row = existing.get(time)
+            if row is None:
+                self.session.add(
+                    MarketBarRecord(
+                        symbol=symbol,
+                        period=period,
+                        time=time,
+                        open=Decimal(bar["open"]),
+                        high=Decimal(bar["high"]),
+                        low=Decimal(bar["low"]),
+                        close=Decimal(bar["close"]),
+                        volume=int(bar["volume"]),
+                        source=source,
+                    )
+                )
+                changed += 1
+                continue
+            row.open = Decimal(bar["open"])
+            row.high = Decimal(bar["high"])
+            row.low = Decimal(bar["low"])
+            row.close = Decimal(bar["close"])
+            row.volume = int(bar["volume"])
+            row.source = source
+            changed += 1
+        await self.session.commit()
+        return changed
 
     async def record_strategy_entry(self, symbol: str, order_id: str) -> bool:
         trading_date = date.today().isoformat()

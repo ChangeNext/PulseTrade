@@ -83,6 +83,24 @@ class ListedStock(TimestampMixin, Base):
     product: Mapped[str] = mapped_column(Text, default="")
 
 
+class MarketBarRecord(TimestampMixin, Base):
+    __tablename__ = "market_bars"
+    __table_args__ = (
+        UniqueConstraint("symbol", "period", "time", name="uq_market_bars_symbol_period_time"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(12), index=True)
+    period: Mapped[str] = mapped_column(String(12), index=True)
+    time: Mapped[str] = mapped_column(String(16), index=True)
+    open: Mapped[Decimal] = mapped_column(Numeric(18, 2))
+    high: Mapped[Decimal] = mapped_column(Numeric(18, 2))
+    low: Mapped[Decimal] = mapped_column(Numeric(18, 2))
+    close: Mapped[Decimal] = mapped_column(Numeric(18, 2))
+    volume: Mapped[int] = mapped_column(Integer, default=0)
+    source: Mapped[str] = mapped_column(String(20), default="KIS")
+
+
 class StrategyEntry(TimestampMixin, Base):
     __tablename__ = "strategy_entries"
     __table_args__ = (UniqueConstraint("trading_date", "symbol", name="uq_strategy_entry_day_symbol"),)

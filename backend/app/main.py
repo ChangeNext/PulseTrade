@@ -488,8 +488,45 @@ def aggregate_minute_bars(bars: list[MinuteBar], minutes: int) -> list[MinuteBar
     return result
 
 
+def minute_bar_payload(bar: MinuteBar) -> dict:
+    return {
+        "time": bar.time,
+        "open": bar.open if bar.open > 0 else bar.price,
+        "high": bar.high,
+        "low": bar.low,
+        "close": bar.price,
+        "volume": bar.volume,
+    }
+
+
+def market_record_to_minute_bar(row) -> MinuteBar:
+    return MinuteBar(
+        symbol=row.symbol,
+        time=row.time,
+        price=row.close,
+        high=row.high,
+        low=row.low,
+        volume=row.volume,
+        open=row.open,
+    )
+
+
+def cache_is_fresh(rows: list, period: str) -> bool:
+    if not rows:
+        return False
+    latest = max(row.updated_at for row in rows if row.updated_at is not None)
+    if latest.tzinfo is None:
+        latest = latest.replace(tzinfo=timezone.utc)
+    age = (datetime.now(timezone.utc) - latest.astimezone(timezone.utc)).total_seconds()
+    if period == "1m":
+        return age < 20
+    return age < 3600
+
+
 @app.get("/api/market/{symbol}/bars", response_model=list[MarketBar])
-async def market_bars(symbol: str, request: Request, period: str = "10m") -> list[MarketBar]:
+async def market_bars(
+    symbol: str, request: Request, session: SessionDep, period: str = "10m"
+) -> list[MarketBar]:
     if not symbol.isdigit() or len(symbol) != 6:
         raise HTTPException(status_code=422, detail="Symbol must be a 6-digit stock code")
     if period not in {"10m", "day", "week", "month"}:
@@ -497,14 +534,28 @@ async def market_bars(symbol: str, request: Request, period: str = "10m") -> lis
     service = market_service_from(request)
     if service is None:
         raise HTTPException(status_code=503, detail="KIS market service is not configured")
+    repository = TradingRepository(session)
+    storage_period = "1m" if period == "10m" else period
+    cached_rows = await repository.market_bars(symbol, storage_period)
     try:
-        bars = (
-            aggregate_minute_bars(await service.get_minute_bars(symbol, max_pages=4), 10)
-            if period == "10m"
-            else await service.get_period_bars(symbol, period)
-        )
+        if not cache_is_fresh(cached_rows, storage_period):
+            fetched = (
+                await service.get_minute_bars(symbol, max_pages=4)
+                if period == "10m"
+                else await service.get_period_bars(symbol, period)
+            )
+            await repository.upsert_market_bars(
+                symbol,
+                storage_period,
+                [minute_bar_payload(bar) for bar in fetched],
+            )
+            cached_rows = await repository.market_bars(symbol, storage_period)
     except (KISAPIError, KISConfigurationError) as error:
-        raise_kis_http_error(error)
+        if not cached_rows:
+            raise_kis_http_error(error)
+    bars = [market_record_to_minute_bar(row) for row in cached_rows]
+    if period == "10m":
+        bars = aggregate_minute_bars(bars, 10)
     return [
         MarketBar(
             time=bar.time,
